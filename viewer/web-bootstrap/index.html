@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EcoScope Explorer</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <span class="eyebrow">ECOSCOPE</span>
+          <h1 id="view-name">Ecological explorer</h1>
+        </div>
+        <p id="status" role="status">Connecting to the local service…</p>
+      </header>
+      <section class="workspace">
+        <div id="viewer" aria-label="Interactive ecological visualization"></div>
+        <aside>
+          <h2>Agent context</h2>
+          <p>Selections made here become structured state available to your MCP agent.</p>
+          <dl id="view-details"></dl>
+          <h3>Latest selection</h3>
+          <pre id="selection">Nothing selected yet.</pre>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+

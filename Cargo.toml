@@ -1,0 +1,87 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/ecoscope-core",
+  "crates/ecoscope-provider-api",
+  "crates/ecoscope-provider-neon",
+  "crates/ecoscope-provider-process",
+  "crates/ecoscope-local-import",
+  "crates/ecoscope-query",
+  "crates/ecoscope-service",
+  "crates/ecoscope-rerun",
+  "crates/ecoscope-web",
+  "crates/ecoscope-mcp",
+  "crates/ecoscope-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+repository = "https://github.com/krnzt/ecoscope"
+authors = ["EcoScope contributors"]
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+arrow-array = "58.4.0"
+arrow-ipc = "58.4.0"
+arrow-json = "58.4.0"
+arrow-schema = "58.4.0"
+async-trait = "0.1.89"
+axum = "0.8.8"
+base64 = "0.22.1"
+blake3 = "1.8.2"
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.54", features = ["derive", "env"] }
+copc-rs = "0.5.0"
+csv = "1.4.0"
+datafusion = { version = "=54.1.0", default-features = false, features = ["nested_expressions", "parquet", "recursive_protection", "sql", "string_expressions", "unicode_expressions"] }
+crc32c = "0.6.8"
+directories = "6.0.0"
+futures = "0.3.31"
+geo = "0.32.0"
+geojson = { version = "0.24.2", features = ["geo-types"] }
+geotiff-reader = { version = "0.8.1", features = ["cog-async", "rustls-tls"] }
+geotiff-writer = "0.8.1"
+geodatafusion = "0.5.0"
+geodatafusion-geoparquet = "0.5.0"
+geozero = { version = "0.15.1", features = ["with-geojson"] }
+fixed = "=1.31.0"
+flatgeobuf = { version = "6.0.1", default-features = false }
+hex = "0.4.3"
+hdf5-metno = { version = "=0.12.1", features = ["static", "zlib"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "tiff", "webp"] }
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+las = { version = "=0.9.5", features = ["laz-parallel"] }
+md5 = "0.8.0"
+mime_guess = "2.0.5"
+ndarray = "0.17.2"
+netcdf3 = "0.6.1"
+parquet = { version = "58.4.0", features = ["arrow"] }
+reqwest = { version = "0.13.1", default-features = false, features = ["json", "stream", "rustls"] }
+rerun = { version = "=0.36.2", default-features = false, features = ["sdk", "image"] }
+rpassword = "7.4.0"
+shapefile = { version = "0.9.0", features = ["geo-types", "serde"] }
+rmcp = { version = "3.1.4", features = ["server", "macros", "schemars", "transport-io"] }
+rusqlite = { version = "0.38.0", features = ["bundled", "chrono", "serde_json", "uuid"] }
+schemars = { version = "1.2.0", features = ["chrono04", "uuid1"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tempfile = "3.24.0"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "fs", "io-util", "net", "process", "signal", "sync", "time"] }
+tower-http = { version = "0.6.8", features = ["fs", "set-header"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+url = { version = "2.5.7", features = ["serde"] }
+uuid = { version = "1.19.0", features = ["v4", "v7", "serde"] }
+walkdir = "2.5.0"
+webbrowser = "1.0.6"
+wkt = "0.14.0"
+zarrs = "0.23.14"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+codegen-units = 1

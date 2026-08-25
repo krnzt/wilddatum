@@ -1,0 +1,12 @@
+/target
+/dist
+/viewer/web-bootstrap/dist
+/.idea
+/.vscode
+.DS_Store
+*.rrd
+*.db
+*.db-shm
+*.db-wal
+.env
+node_modules/

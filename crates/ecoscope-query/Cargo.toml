@@ -1,0 +1,22 @@
+[package]
+name = "ecoscope-query"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+arrow-array.workspace = true
+arrow-ipc.workspace = true
+arrow-json.workspace = true
+arrow-schema.workspace = true
+datafusion.workspace = true
+ecoscope-core = { path = "../ecoscope-core" }
+geodatafusion.workspace = true
+geodatafusion-geoparquet.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+parquet.workspace = true
+tempfile.workspace = true
+tokio.workspace = true

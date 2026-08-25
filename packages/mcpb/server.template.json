@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.krnzt/ecoscope",
+  "title": "EcoScope",
+  "description": "Agent-native ecological data discovery, analysis, visualization, and provenance",
+  "repository": {
+    "url": "https://github.com/krnzt/ecoscope",
+    "source": "github"
+  },
+  "version": "${VERSION}",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "${MCPB_URL}",
+      "fileSha256": "${MCPB_SHA256}",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

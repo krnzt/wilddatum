@@ -1,0 +1,257 @@
+//! Loopback-only browser surface for the Rerun Web Viewer.
+
+use std::{path::PathBuf, sync::Arc};
+
+use anyhow::{Context, Result};
+use axum::{
+    Json, Router,
+    body::Body,
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::get,
+};
+use ecoscope_core::{SemanticSelection, ViewId};
+use ecoscope_service::EcoScopeService;
+use serde::Deserialize;
+use serde_json::{Value, json};
+use tower_http::services::{ServeDir, ServeFile};
+use uuid::Uuid;
+
+#[derive(Clone)]
+struct AppState {
+    service: EcoScopeService,
+    view_id: ViewId,
+    token: String,
+    recording: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenQuery {
+    token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SelectionEvent {
+    selection: SemanticSelection,
+    #[serde(default)]
+    summary: Value,
+}
+
+pub struct ServeOptions {
+    pub view_id: String,
+    pub port: u16,
+    pub open_browser: bool,
+}
+
+pub async fn serve(service: EcoScopeService, options: ServeOptions) -> Result<()> {
+    let view = service
+        .get_view(&options.view_id)
+        .context("loading the requested EcoScope view")?;
+    let recording = service
+        .paths()
+        .views_dir
+        .join(format!("{}.rrd", view.view_id));
+    ecoscope_rerun::write_recording(&service, &view.view_id.0, &recording)
+        .context("rendering the Rerun recording")?;
+    let state = Arc::new(AppState {
+        service,
+        view_id: view.view_id,
+        token: Uuid::new_v4().simple().to_string(),
+        recording,
+    });
+
+    let web_dist = find_web_dist();
+    let fallback = ServeFile::new(web_dist.join("index.html"));
+    let static_files = ServeDir::new(web_dist).not_found_service(fallback);
+    let app = Router::new()
+        .route("/api/view", get(get_view))
+        .route("/api/selection", get(get_selection).post(post_selection))
+        .route("/api/recording.rrd", get(get_recording))
+        .fallback_service(static_files)
+        .with_state(state.clone());
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", options.port))
+        .await
+        .context("binding the loopback explorer server")?;
+    let address = listener.local_addr()?;
+    let url = format!("http://{address}/?token={}", state.token);
+    println!("EcoScope explorer: {url}");
+    if options.open_browser {
+        webbrowser::open(&url).context("opening the browser")?;
+    }
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("serving the EcoScope explorer")
+}
+
+async fn get_view(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TokenQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(response) = authorize(&state, &query, &headers, false) {
+        return response.into_response();
+    }
+    match state.service.get_view(&state.view_id.0) {
+        Ok(view) => Json(view).into_response(),
+        Err(error) => error_response(error.to_string()),
+    }
+}
+
+async fn get_selection(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TokenQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(response) = authorize(&state, &query, &headers, false) {
+        return response.into_response();
+    }
+    match state.service.latest_selection(&state.view_id.0) {
+        Ok(selection) => Json(selection).into_response(),
+        Err(ecoscope_core::EcoScopeError::NotFound(_)) => {
+            Json(json!({"selection": null})).into_response()
+        }
+        Err(error) => error_response(error.to_string()),
+    }
+}
+
+async fn post_selection(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TokenQuery>,
+    headers: HeaderMap,
+    Json(event): Json<SelectionEvent>,
+) -> Response {
+    if let Err(response) = authorize(&state, &query, &headers, true) {
+        return response.into_response();
+    }
+    match state
+        .service
+        .save_selection(&state.view_id.0, event.selection, event.summary)
+    {
+        Ok(selection) => (StatusCode::CREATED, Json(selection)).into_response(),
+        Err(error) => error_response(error.to_string()),
+    }
+}
+
+async fn get_recording(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TokenQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(response) = authorize(&state, &query, &headers, false) {
+        return response.into_response();
+    }
+    match tokio::fs::read(&state.recording).await {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(Body::from(bytes))
+            .expect("static response"),
+        Err(error) => error_response(error.to_string()),
+    }
+}
+
+fn authorize(
+    state: &AppState,
+    query: &TokenQuery,
+    headers: &HeaderMap,
+    require_same_origin: bool,
+) -> std::result::Result<(), (StatusCode, &'static str)> {
+    if query.token != state.token {
+        return Err((StatusCode::UNAUTHORIZED, "invalid explorer launch token"));
+    }
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !(host.starts_with("127.0.0.1:") || host.starts_with("localhost:")) {
+        return Err((StatusCode::FORBIDDEN, "non-loopback Host rejected"));
+    }
+    if require_same_origin {
+        let origin = headers
+            .get(header::ORIGIN)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        if !(origin.starts_with("http://127.0.0.1:") || origin.starts_with("http://localhost:")) {
+            return Err((StatusCode::FORBIDDEN, "cross-origin mutation rejected"));
+        }
+    }
+    Ok(())
+}
+
+fn find_web_dist() -> PathBuf {
+    if let Some(path) = std::env::var_os("ECOSCOPE_WEB_DIST") {
+        return PathBuf::from(path);
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(bin_dir) = executable.parent()
+    {
+        let installed = bin_dir.join("../share/ecoscope/web");
+        if installed.join("index.html").is_file() {
+            return installed;
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../viewer/web-bootstrap/dist")
+}
+
+fn error_response(message: String) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({"error": message})),
+    )
+        .into_response()
+}
+
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::HeaderValue;
+    use ecoscope_service::ServicePaths;
+
+    use super::*;
+
+    #[test]
+    fn explorer_authorization_requires_token_loopback_and_same_origin() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = EcoScopeService::open(ServicePaths::under(
+            directory.path().join("data"),
+            directory.path().join("cache"),
+        ))
+        .unwrap();
+        let state = AppState {
+            service,
+            view_id: ViewId::new(),
+            token: "secret".into(),
+            recording: directory.path().join("view.rrd"),
+        };
+        let query = TokenQuery {
+            token: "secret".into(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:4123"));
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://127.0.0.1:4123"),
+        );
+        assert!(authorize(&state, &query, &headers, true).is_ok());
+
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://attacker.test"),
+        );
+        let response = authorize(&state, &query, &headers, true).unwrap_err();
+        assert_eq!(response.0, StatusCode::FORBIDDEN);
+
+        let wrong_token = TokenQuery {
+            token: "wrong".into(),
+        };
+        let response = authorize(&state, &wrong_token, &headers, false).unwrap_err();
+        assert_eq!(response.0, StatusCode::UNAUTHORIZED);
+    }
+}

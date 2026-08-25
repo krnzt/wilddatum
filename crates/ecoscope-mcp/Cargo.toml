@@ -1,0 +1,27 @@
+[package]
+name = "ecoscope-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+ecoscope-core = { path = "../ecoscope-core" }
+ecoscope-provider-api = { path = "../ecoscope-provider-api" }
+ecoscope-provider-neon = { path = "../ecoscope-provider-neon" }
+ecoscope-provider-process = { path = "../ecoscope-provider-process" }
+ecoscope-rerun = { path = "../ecoscope-rerun" }
+ecoscope-service = { path = "../ecoscope-service" }
+keyring.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["client", "transport-async-rw"] }
+tempfile.workspace = true

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ecoscope.dev/schemas/provider-process-config-v1.schema.json",
+  "title": "EcoScope provider subprocess configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "expected_provider_id", "command"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "expected_provider_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "command": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute executable path. Use an absolute interpreter path plus an absolute script argument for interpreted providers."
+    },
+    "args": {"type": "array", "items": {"type": "string"}, "default": []},
+    "timeout_ms": {"type": "integer", "minimum": 1, "default": 30000},
+    "response_limit_bytes": {"type": "integer", "minimum": 1024, "default": 4194304}
+  }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "ecoscope-provider-process"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+ecoscope-core = { path = "../ecoscope-core" }
+ecoscope-provider-api = { path = "../ecoscope-provider-api" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[[bin]]
+name = "ecoscope-provider-fixture"
+path = "src/bin/ecoscope-provider-fixture.rs"

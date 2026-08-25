@@ -1,0 +1,7 @@
+timestamp,site,soil_moisture,qc_status
+2025-05-13T00:00:00Z,HARV,0.241,pass
+2025-05-14T00:00:00Z,HARV,0.257,pass
+2025-05-15T00:00:00Z,HARV,0.391,suspect
+2025-05-13T00:00:00Z,ABBY,0.312,pass
+2025-05-14T00:00:00Z,ABBY,0.304,pass
+
