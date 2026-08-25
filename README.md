@@ -73,6 +73,8 @@ boundaries are documented in [architecture](docs/ARCHITECTURE.md) and
 - Rust 1.95 or later; the repository pins the toolchain.
 - CMake and a C/C++ compiler for the statically linked HDF5 reader.
 - Node.js 22 or later to build the browser viewer.
+- Linux builds also require `pkg-config` and the D-Bus development headers
+  (`libdbus-1-dev` on Debian or Ubuntu) for native keychain integration.
 
 ### Build
 
