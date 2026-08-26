@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "ecoscope",
   "display_name": "EcoScope",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "Discover, materialize, visualize, select, and cite ecological data",
   "long_description": "A local-first ecological data workbench for agents. NEON and user-selected local scientific files share reproducible manifests, semantic multimodal views, structured selections, and provenance-aware exports.",
   "author": {
@@ -29,6 +29,6 @@
   "license": "MIT",
   "privacy_policies": ["https://www.neonscience.org/privacy-policy"],
   "compatibility": {
-    "platforms": ["darwin", "win32", "linux"]
+    "platforms": []
   }
 }

@@ -1,0 +1,178 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: viewer/web-bootstrap/package-lock.json
+      - run: npm ci
+        working-directory: viewer/web-bootstrap
+      - run: npm run check
+        working-directory: viewer/web-bootstrap
+      - run: npm run build
+        working-directory: viewer/web-bootstrap
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-explorer
+          path: viewer/web-bootstrap/dist
+          if-no-files-found: error
+
+  linux-x86_64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p ecoscope-cli
+      - run: target/release/ecoscope --version
+      - name: Ensure the release does not dynamically depend on libdbus
+        run: '! ldd target/release/ecoscope | grep -q libdbus'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-linux-x86_64
+          path: target/release/ecoscope
+          if-no-files-found: error
+
+  macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p ecoscope-cli
+      - run: target/release/ecoscope --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-macos-arm64
+          path: target/release/ecoscope
+          if-no-files-found: error
+
+  macos-x86_64:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p ecoscope-cli
+      - run: target/release/ecoscope --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-macos-x86_64
+          path: target/release/ecoscope
+          if-no-files-found: error
+
+  package-linux:
+    needs: [web, linux-x86_64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-explorer
+          path: viewer/web-bootstrap/dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: binary-linux-x86_64
+          path: release-input/linux
+      - run: chmod +x release-input/linux/ecoscope
+      - run: scripts/package-release.sh release-input/linux/ecoscope dist linux-x86_64 linux
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-x86_64
+          path: dist
+          if-no-files-found: error
+
+  package-macos:
+    needs: [web, macos-arm64, macos-x86_64]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-explorer
+          path: viewer/web-bootstrap/dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: binary-macos-arm64
+          path: release-input/arm64
+      - uses: actions/download-artifact@v8
+        with:
+          name: binary-macos-x86_64
+          path: release-input/x86_64
+      - name: Create and verify the universal executable
+        run: |
+          chmod +x release-input/arm64/ecoscope release-input/x86_64/ecoscope
+          mkdir -p release-input/universal
+          lipo -create release-input/arm64/ecoscope release-input/x86_64/ecoscope -output release-input/universal/ecoscope
+          lipo -archs release-input/universal/ecoscope | grep -q arm64
+          lipo -archs release-input/universal/ecoscope | grep -q x86_64
+          release-input/universal/ecoscope --version
+      - run: scripts/package-release.sh release-input/universal/ecoscope dist macos-universal darwin
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-universal
+          path: dist
+          if-no-files-found: error
+
+  publish:
+    needs: [package-linux, package-macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux-x86_64
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-macos-universal
+          path: dist
+      - name: Generate the official MCP Registry document
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          scripts/render-server-json.sh \
+            "$version" "$GITHUB_REF_NAME" \
+            "dist/ecoscope-v${version}-macos-universal.mcpb" \
+            "dist/ecoscope-v${version}-linux-x86_64.mcpb" \
+            dist/server.json
+      - name: Create prerelease and upload verified artifacts
+        uses: softprops/action-gh-release@v3
+        with:
+          prerelease: true
+          generate_release_notes: true
+          files: dist/*
+      - name: Install MCP Registry publisher
+        run: |
+          curl -fL --retry 3 \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz \
+            | tar xz mcp-publisher
+          ./mcp-publisher --version
+      - name: Validate and publish to the official MCP Registry
+        run: |
+          ./mcp-publisher validate dist/server.json
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish dist/server.json

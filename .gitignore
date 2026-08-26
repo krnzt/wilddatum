@@ -1,6 +1,9 @@
 /target
 /dist
 /viewer/web-bootstrap/dist
+/viewer/web-bootstrap/test-results
+/viewer/web-bootstrap/playwright-report
+/viewer/web-bootstrap/blob-report
 /.idea
 /.vscode
 .DS_Store

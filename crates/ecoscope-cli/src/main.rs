@@ -8,6 +8,8 @@ use ecoscope_provider_process::{ProcessProvider, ProcessProviderConfig, discover
 use ecoscope_service::EcoScopeService;
 use tracing_subscriber::EnvFilter;
 
+mod demo;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "ecoscope",
@@ -135,6 +137,23 @@ enum Commands {
     },
     /// Diagnose database, credentials, MCP, and viewer readiness.
     Doctor,
+    /// Create and open a reproducible multimodal demonstration.
+    Demo {
+        #[arg(value_enum, default_value_t = DemoKind::Synthetic)]
+        kind: DemoKind,
+        /// Permit the roughly 224 MB official NEON teaching-data download.
+        #[arg(long)]
+        accept_download: bool,
+        /// Render the view without opening and serving the browser explorer.
+        #[arg(long)]
+        no_open: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DemoKind {
+    Synthetic,
+    Neon,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -325,6 +344,28 @@ async fn main() -> Result<()> {
             .await?;
         }
         Commands::Doctor => doctor(&service)?,
+        Commands::Demo {
+            kind,
+            accept_download,
+            no_open,
+        } => {
+            let demo = match kind {
+                DemoKind::Synthetic => demo::synthetic(&service).await?,
+                DemoKind::Neon => demo::official_neon(&service, accept_download).await?,
+            };
+            print_json(&demo)?;
+            if !no_open {
+                ecoscope_web::serve(
+                    service,
+                    ecoscope_web::ServeOptions {
+                        view_id: demo.view_id,
+                        port: 0,
+                        open_browser: true,
+                    },
+                )
+                .await?;
+            }
+        }
     }
     Ok(())
 }
@@ -362,6 +403,9 @@ fn setup(service: &EcoScopeService) -> Result<()> {
     println!();
     println!("Or run `ecoscope register codex` / `ecoscope register claude`.");
     println!("Run `ecoscope connect-neon` when you are ready to download NEON data.");
+    println!();
+    println!("Readiness report:");
+    doctor(service)?;
     Ok(())
 }
 
@@ -428,6 +472,10 @@ fn connect_neon() -> Result<()> {
 
 fn register_mcp(host: McpHost) -> Result<()> {
     let executable = std::env::current_exe()?;
+    if registration_status(host)?.is_some() {
+        println!("EcoScope is already registered with {host:?}; existing configuration retained.");
+        return Ok(());
+    }
     let mut command = match host {
         McpHost::Codex => {
             let mut command = Command::new("codex");
@@ -456,8 +504,40 @@ fn register_mcp(host: McpHost) -> Result<()> {
     if !status.success() {
         bail!("MCP host registration exited with {status}");
     }
+    if registration_status(host)?.is_none() {
+        bail!("the {host:?} CLI returned success but EcoScope was not present afterward");
+    }
     println!("Registered EcoScope with {host:?}.");
     Ok(())
+}
+
+fn registration_status(host: McpHost) -> Result<Option<String>> {
+    let output = match host {
+        McpHost::Codex => Command::new("codex")
+            .args(["mcp", "get", "ecoscope", "--json"])
+            .output(),
+        McpHost::Claude => Command::new("claude")
+            .args(["mcp", "get", "ecoscope"])
+            .output(),
+    }
+    .with_context(|| {
+        format!(
+            "could not run the {} CLI",
+            match host {
+                McpHost::Codex => "Codex",
+                McpHost::Claude => "Claude",
+            }
+        )
+    })?;
+    if output.status.success() {
+        return Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()));
+    }
+    let message = String::from_utf8_lossy(&output.stderr);
+    if message.contains("No MCP server named") || message.contains("not found") {
+        Ok(None)
+    } else {
+        bail!("could not inspect existing {host:?} registration: {message}")
+    }
 }
 
 fn doctor(service: &EcoScopeService) -> Result<()> {

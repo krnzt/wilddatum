@@ -158,20 +158,27 @@ fn send_blueprint(
         .map(|layer| {
             let name = layer.name;
             let root = layer.entity_root;
+            let contents = [format!("{root}/**")];
             match layer.modality {
-                Modality::PointCloud => {
-                    ContainerLike::from(Spatial3DView::new(name).with_origin(root))
-                }
-                Modality::TimeSeries | Modality::Tabular => {
-                    ContainerLike::from(TimeSeriesView::new(name).with_origin(root))
-                }
+                Modality::PointCloud => ContainerLike::from(
+                    Spatial3DView::new(name)
+                        .with_origin(root)
+                        .with_contents(contents),
+                ),
+                Modality::TimeSeries | Modality::Tabular => ContainerLike::from(
+                    TimeSeriesView::new(name)
+                        .with_origin(root)
+                        .with_contents(contents),
+                ),
                 Modality::Raster
                 | Modality::Hyperspectral
                 | Modality::Image
                 | Modality::Tensor
-                | Modality::Vector => {
-                    ContainerLike::from(Spatial2DView::new(name).with_origin(root))
-                }
+                | Modality::Vector => ContainerLike::from(
+                    Spatial2DView::new(name)
+                        .with_origin(root)
+                        .with_contents(contents),
+                ),
                 Modality::Unknown => ContainerLike::from(
                     TextDocumentView::new(name).with_origin(format!("{root}/adapter_notice")),
                 ),
@@ -245,7 +252,9 @@ fn log_point_cloud(
     recording
         .log_static(
             format!("{entity_root}/points"),
-            &rerun::Points3D::new(positions).with_colors(colors),
+            &rerun::Points3D::new(positions)
+                .with_colors(colors)
+                .with_radii([rerun::Radius::new_ui_points(2.5)]),
         )
         .map_err(rerun_error)?;
     recording

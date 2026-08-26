@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install Linux build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95.0"
@@ -19,6 +19,22 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: viewer/web-bootstrap/package-lock.json
+      - run: npm ci
+        working-directory: viewer/web-bootstrap
+      - run: npm run build
+        working-directory: viewer/web-bootstrap
+      - run: npx playwright install --with-deps chromium
+        working-directory: viewer/web-bootstrap
+      - name: Exercise real Rerun LiDAR and hyperspectral selections in Chromium
+        run: npm run test:e2e
+        working-directory: viewer/web-bootstrap
+        env:
+          ECOSCOPE_BIN: ${{ github.workspace }}/target/debug/ecoscope
 
   web:
     runs-on: ubuntu-latest

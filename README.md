@@ -66,47 +66,49 @@ Detailed support and caveats are in the [format matrix](docs/FORMATS.md). Design
 boundaries are documented in [architecture](docs/ARCHITECTURE.md) and
 [implementation decisions](docs/DECISIONS.md).
 
-## Five-minute local demo
+## Install and see it work
 
-### Requirements
-
-- Rust 1.95 or later; the repository pins the toolchain.
-- CMake and a C/C++ compiler for the statically linked HDF5 reader.
-- Node.js 22 or later to build the browser viewer.
-- Linux builds also require `pkg-config` and the D-Bus development headers
-  (`libdbus-1-dev` on Debian or Ubuntu) for native keychain integration.
-
-### Build
+The alpha ships self-contained macOS universal and Linux x86-64 packages. You
+do not need Rust, Node.js, CMake, or a separate Rerun installation:
 
 ```bash
-git clone https://github.com/krnzt/ecoscope.git
-cd ecoscope
-npm --prefix viewer/web-bootstrap ci
-npm --prefix viewer/web-bootstrap run build
-cargo build --release
-./target/release/ecoscope setup
+curl -fsSL https://raw.githubusercontent.com/krnzt/ecoscope/v0.1.0-alpha.1/scripts/install.sh | sh
 ```
 
-### Import and inspect a local table
+The installer verifies the release SHA-256, installs under `~/.local` by
+default, and runs `ecoscope setup`. Set `ECOSCOPE_INSTALL_DIR` to choose another
+prefix. If `~/.local/bin` is not already on your `PATH`, add it before continuing.
+
+Create a deterministic LiDAR + hyperspectral demonstration and open it in the
+bundled Rerun browser viewer:
 
 ```bash
-./target/release/ecoscope import examples/observations.csv
-./target/release/ecoscope datasets
-./target/release/ecoscope preview ds_... --limit 20
-./target/release/ecoscope create-view --name "Site comparison" ds_...
-./target/release/ecoscope open view_...
+ecoscope demo synthetic
 ```
 
-Local paths are selected in the terminal, never passed as an MCP argument. The
-private SQLite registry retains the source path; agents receive an opaque ID,
-checksum, display name, scientific metadata, and provenance.
-
-## Register as an MCP server
+The generated LAS and HDF5 files pass through the same import, manifest, cube
+mapping, Rerun recording, and selection-query paths as user data. No network or
+credentials are needed. An opt-in official NEON teaching-data demonstration is
+also available (roughly 224 MiB):
 
 ```bash
-./target/release/ecoscope register codex
-./target/release/ecoscope register claude
+ecoscope demo neon --accept-download
 ```
+
+## Register the normal MCP server
+
+EcoScope is published as `io.github.krnzt/ecoscope` in the official MCP
+Registry. It is also a normal local stdio server: Codex, Claude Code, and any
+compatible host launch the same `ecoscope mcp` process and discover its tools.
+
+```bash
+ecoscope register codex
+ecoscope register claude
+```
+
+Both registration commands are safe to repeat and preserve an existing
+EcoScope entry. Platform-specific MCPB bundles are attached to every release
+for hosts and registries that install MCPB packages.
 
 Equivalent host commands are:
 
@@ -121,7 +123,7 @@ Generic MCP configuration:
 {
   "mcpServers": {
     "ecoscope": {
-      "command": "/absolute/path/to/ecoscope",
+      "command": "/home/you/.local/bin/ecoscope",
       "args": ["mcp"]
     }
   }
@@ -131,6 +133,22 @@ Generic MCP configuration:
 After registration, the host launches EcoScope like any other local MCP server,
 negotiates the protocol, discovers its tools, and receives bounded structured
 results rather than bulk scientific files.
+
+## Use local scientific files
+
+```bash
+ecoscope import examples/observations.csv
+ecoscope datasets
+ecoscope preview ds_... --limit 20
+ecoscope create-view --name "Site comparison" ds_...
+ecoscope open view_...
+```
+
+Local paths are selected in the terminal, never passed as an MCP argument. The
+private SQLite registry retains the source path; agents receive an opaque ID,
+checksum, display name, scientific metadata, and provenance. The same path
+supports the raster, vector, point-cloud, image, and cube formats in the
+[format matrix](docs/FORMATS.md).
 
 ## NEON
 
@@ -182,6 +200,10 @@ contract, conformance fixture, and security model.
 
 - EcoScope is local stdio MCP today; remote Streamable HTTP and OAuth are not
   implemented yet.
+- The alpha macOS executables are not Apple-notarized. macOS may require an
+  explicit first-run approval; release checksums still protect artifact integrity.
+- The browser explorer uses Rerun's WebGL renderer for reliable software and CI
+  support. Native Rerun remains the higher-ceiling surface for very large scenes.
 - Rerun exposes entity/instance selection events, but not one universal brush
   protocol for every view. Explicit interval, map, raster, spectral, and row
   selections use the same `record_selection`/`query_selection` path.
@@ -194,12 +216,28 @@ contract, conformance fixture, and security model.
 
 ## Development
 
+Building from source requires Rust 1.95, Node.js 22, CMake, and a C/C++
+compiler. Linux uses a vendored static D-Bus client for keychain access.
+
+```bash
+git clone https://github.com/krnzt/ecoscope.git
+cd ecoscope
+npm --prefix viewer/web-bootstrap ci
+npm --prefix viewer/web-bootstrap run build
+cargo build --release
+./target/release/ecoscope setup
+```
+
+Run the complete validation suite with:
+
 ```bash
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 npm --prefix viewer/web-bootstrap run check
 npm --prefix viewer/web-bootstrap run build
+npm --prefix viewer/web-bootstrap exec -- playwright install chromium
+npm --prefix viewer/web-bootstrap run test:e2e
 npm --prefix viewer/web-bootstrap audit --omit=dev
 ```
 
@@ -214,8 +252,11 @@ NEON_HYPERSPECTRAL_FIXTURE=/tmp/neon-hyperspectral.h5 \
 cargo test -p ecoscope-rerun --test official_neon_fixtures -- --ignored
 ```
 
-Build a local MCPB bundle after the Rust and browser builds with
-`scripts/build-mcpb.sh`.
+Build local MCPB and archive artifacts after the Rust and browser builds with
+`scripts/package-release.sh target/release/ecoscope dist macos-arm64 darwin`
+(substitute `linux-x86_64 linux` on Linux). The tag workflow builds and combines
+both macOS architectures, verifies the Linux linkage, publishes checksummed
+release assets, and submits the generated `server.json` using GitHub OIDC.
 
 ## Project status
 

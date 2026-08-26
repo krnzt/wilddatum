@@ -19,9 +19,19 @@ ecoscope-provider-process = { path = "../ecoscope-provider-process" }
 ecoscope-rerun = { path = "../ecoscope-rerun" }
 ecoscope-service = { path = "../ecoscope-service" }
 ecoscope-web = { path = "../ecoscope-web" }
+futures.workspace = true
+hdf5-metno.workspace = true
+las.workspace = true
+ndarray.workspace = true
+reqwest.workspace = true
 rpassword.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["client", "transport-child-process"] }
+tempfile.workspace = true

@@ -31,7 +31,7 @@ await viewer.start(apiUrl("/api/recording.rrd"), viewerContainer, {
   hide_welcome_screen: true,
   width: "100%",
   height: "100%",
-  render_backend: "webgpu"
+  render_backend: "webgl"
 });
 status.textContent = "Connected · Rerun semantic bridge active";
 

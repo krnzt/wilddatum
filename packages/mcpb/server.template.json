@@ -11,8 +11,16 @@
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "${MCPB_URL}",
-      "fileSha256": "${MCPB_SHA256}",
+      "identifier": "${MACOS_MCPB_URL}",
+      "fileSha256": "${MACOS_MCPB_SHA256}",
+      "transport": {
+        "type": "stdio"
+      }
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "${LINUX_MCPB_URL}",
+      "fileSha256": "${LINUX_MCPB_SHA256}",
       "transport": {
         "type": "stdio"
       }

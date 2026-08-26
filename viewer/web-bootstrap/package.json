@@ -1,17 +1,19 @@
 {
   "name": "@ecoscope/web-explorer",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@rerun-io/web-viewer": "0.36.2"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "typescript": "5.9.3",
     "vite": "7.3.6"
   }
