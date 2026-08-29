@@ -76,13 +76,17 @@ or materialized dataset without exposing its private path:
 ```bash
 wilddatum inventory ds_...
 wilddatum suggest-views ds_lidar... ds_cube...
+wilddatum create-suggested-view suggest_... ds_lidar... ds_cube...
 ```
 
 The equivalent registered MCP tools are `inspect_scientific_inventory` and
-`suggest_views`. Inventories contain bounded fields, arrays, axes, units, CF/QC
-relationships, evidence, and unresolved decisions. Suggestions are
-deterministic and side-effect free: they propose panels, encodings, and
-selection links but do not create or open a view.
+`suggest_views`; `create_view_from_suggestion` accepts one of those opaque
+suggestion IDs. Inventories contain bounded fields, arrays, axes, units, CF/QC
+relationships, evidence, and unresolved decisions. Suggestions remain
+deterministic and side-effect free until accepted. On acceptance WildDatum
+recomputes the suggestion, rejects client-invented IDs, and persists an
+`EcoViewSpec` v2 with explicit scientific panels, encodings, and versioned link
+rules. Existing v1 views remain readable.
 
 For the official NEON teaching pair, WildDatum reads the 107 measured
 wavelengths, selects bands nearest 650/550/450 nm, and ranks a 3D point-cloud +
@@ -90,6 +94,11 @@ RGB + spectrum workspace first. Cube-pixel → spectrum is marked exact. LiDAR
 point → image pixel remains explicitly unavailable until the LAS CRS and HDF5
 world-to-pixel affine metadata are verified; similar-looking bounds are never
 treated as registration.
+
+Accepted point-cloud + spectral-cube views render through the same pinned Rerun
+adapter and browser explorer as manually created views. The browser reports the
+view-spec version and panel/link counts, while unavailable link rules remain
+visible structured state rather than becoming guessed interactions.
 
 Detailed support and caveats are in the [format matrix](docs/FORMATS.md). Design
 boundaries are documented in [architecture](docs/ARCHITECTURE.md) and

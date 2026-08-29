@@ -48,9 +48,11 @@ Alpha.3 deepens the human-agent visualization loop before adding another RI.
   arrays, axes, units, QC relationships, evidence, and unresolved semantics.
 - [x] Expose deterministic, evidence-backed view suggestions through the normal
   MCP and CLI without creating a view or claiming unverified registration.
-- [ ] Add backward-compatible `EcoViewSpec` v2 panels and versioned link rules.
-- [ ] Compile an accepted suggestion into linked Rerun panels and highlight
-  derived selections with exactness and provenance.
+- [x] Add backward-compatible `EcoViewSpec` v2 panels and versioned link rules.
+- [x] Recompute and compile an accepted suggestion into a durable view through
+  the normal MCP and CLI, then render its supported layers through Rerun.
+- [ ] Evaluate enabled link rules and highlight derived selections with
+  exactness and provenance in Rerun and the browser explorer.
 - [ ] Extract LAS CRS plus NEON HDF5 map/affine metadata and implement the exact
   point-return → image-pixel → spectrum workflow.
 - [ ] Extend profile/trajectory views to multiple values, Parquet/Arrow source

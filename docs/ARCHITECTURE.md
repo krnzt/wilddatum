@@ -67,6 +67,15 @@ download data. At most eight unique dataset handles enter one request and at
 most twelve suggestions leave it; the normal MCP response-size ceiling still
 applies.
 
+`create_view_from_suggestion` is the only suggestion-acceptance boundary. It
+accepts an opaque suggestion ID plus the original dataset handles, recomputes
+the bounded suggestion from current immutable manifests, and rejects IDs that
+do not match. The resulting `EcoViewSpec` v2 snapshots explicit panels,
+panel-local encodings, selection link rules, link exactness, and the source
+suggestion ID. A v2 RGB panel also configures the underlying spectral layer for
+the existing Rerun renderer. Missing v2 fields use empty defaults so persisted
+v1 views continue to deserialize and render.
+
 The first multimodal recipe combines point-cloud, wavelength-aware RGB, and
 spectrum panels. RGB bands are selected from inspected wavelength coordinates,
 not institution-specific indices. Cube-pixel-to-spectrum can be exact from
