@@ -524,6 +524,35 @@ pub struct EcoViewSpec {
     pub camera: Option<CameraState>,
     pub active_timeline: Option<TimelineState>,
     pub provenance_visible: bool,
+    /// Explicit scientific panels introduced by EcoViewSpec v2. Empty for v1 views.
+    #[serde(default)]
+    pub panels: Vec<EcoPanel>,
+    /// Structured, inspectable selection propagation rules between panels.
+    #[serde(default)]
+    pub link_rules: Vec<ViewLinkRule>,
+    /// Server-generated suggestion accepted to create this view, when applicable.
+    #[serde(default)]
+    pub source_suggestion_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct EcoPanel {
+    pub id: String,
+    pub kind: SuggestedPanelKind,
+    pub layer_id: String,
+    pub representation: String,
+    #[serde(default)]
+    pub encoding: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ViewLinkRule {
+    pub source_panel: String,
+    pub source_selection: String,
+    pub target_panel: String,
+    pub resolver: String,
+    pub exactness: LinkExactness,
+    pub explanation: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1090,5 +1119,28 @@ mod tests {
         let original_hash = plan.plan_hash.clone();
         plan.approved_at = Some(DateTime::from_timestamp(1, 0).unwrap());
         assert_eq!(plan.finalize().unwrap().plan_hash, original_hash);
+    }
+
+    #[test]
+    fn eco_view_spec_v2_reads_v1_json_with_empty_scientific_panels() {
+        let view: EcoViewSpec = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "view_id": "view_legacy",
+            "revision": 1,
+            "name": "Legacy view",
+            "dataset_ids": [],
+            "layout": "single",
+            "layers": [],
+            "filters": [],
+            "linked_groups": [],
+            "camera": null,
+            "active_timeline": null,
+            "provenance_visible": true
+        }))
+        .unwrap();
+
+        assert!(view.panels.is_empty());
+        assert!(view.link_rules.is_empty());
+        assert!(view.source_suggestion_id.is_none());
     }
 }

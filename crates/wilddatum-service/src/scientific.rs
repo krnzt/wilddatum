@@ -2,11 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value, json};
 use wilddatum_core::{
-    AxisRole, CoordinateSummary, DatasetId, DatasetManifest, InferenceConfidence, LinkExactness,
-    LocalAssetInspection, Modality, ProviderKind, Result, SCIENTIFIC_INVENTORY_VERSION,
-    ScientificAxis, ScientificComponent, ScientificComponentKind, ScientificInventory,
-    ScientificRole, SemanticEvidence, SuggestedLink, SuggestedPanel, SuggestedPanelKind,
-    VIEW_SUGGESTION_VERSION, ViewSuggestion, ViewSuggestionSet, WildDatumError,
+    AxisRole, CoordinateSummary, DatasetId, DatasetManifest, EcoPanel, InferenceConfidence,
+    LinkExactness, LocalAssetInspection, Modality, ProviderKind, Result,
+    SCIENTIFIC_INVENTORY_VERSION, ScientificAxis, ScientificComponent, ScientificComponentKind,
+    ScientificInventory, ScientificRole, SemanticEvidence, SuggestedLink, SuggestedPanel,
+    SuggestedPanelKind, VIEW_SUGGESTION_VERSION, ViewLinkRule, ViewSuggestion, ViewSuggestionSet,
+    WildDatumError,
 };
 
 use crate::WildDatumService;
@@ -161,6 +162,80 @@ impl WildDatumService {
                 .collect(),
             suggestions,
         })
+    }
+
+    /// Recompute and accept a server-generated suggestion as a durable EcoViewSpec v2.
+    /// Arbitrary client-authored recipes are intentionally not accepted here.
+    pub fn create_view_from_suggestion(
+        &self,
+        suggestion_id: &str,
+        dataset_ids: &[String],
+        name: Option<String>,
+    ) -> Result<wilddatum_core::EcoViewSpec> {
+        let suggestions = self.suggest_views(dataset_ids)?;
+        let suggestion = suggestions
+            .suggestions
+            .into_iter()
+            .find(|suggestion| suggestion.suggestion_id == suggestion_id)
+            .ok_or_else(|| {
+                WildDatumError::NotFound(format!(
+                    "suggestion {suggestion_id} for the supplied dataset IDs"
+                ))
+            })?;
+        let mut view = self.create_view(
+            name.unwrap_or_else(|| suggestion.title.clone()),
+            suggestion.dataset_ids.clone(),
+        )?;
+
+        for panel in suggestion.panels {
+            let layer = view
+                .layers
+                .iter_mut()
+                .find(|layer| layer.dataset_id == panel.dataset_id)
+                .ok_or_else(|| {
+                    WildDatumError::Internal(format!(
+                        "accepted panel {} has no dataset layer",
+                        panel.id
+                    ))
+                })?;
+            let mut encoding = layer.encoding.clone();
+            encoding.extend(panel.encoding.clone());
+            if panel.representation == "rgb" {
+                if !matches!(layer.modality, Modality::Hyperspectral | Modality::Tensor) {
+                    return Err(WildDatumError::Invalid(format!(
+                        "RGB panel {} does not reference a spectral cube layer",
+                        panel.id
+                    )));
+                }
+                let manifest = self.get_manifest(&panel.dataset_id.0)?;
+                super::enrich_cube_encoding(&manifest, &mut encoding);
+                layer.encoding = encoding.clone();
+            }
+            view.panels.push(EcoPanel {
+                id: panel.id,
+                kind: panel.kind,
+                layer_id: layer.id.clone(),
+                representation: panel.representation,
+                encoding,
+            });
+        }
+        view.link_rules = suggestion
+            .links
+            .into_iter()
+            .map(|link| ViewLinkRule {
+                source_panel: link.source_panel,
+                source_selection: link.source_selection,
+                target_panel: link.target_panel,
+                resolver: link.resolver,
+                exactness: link.exactness,
+                explanation: link.explanation,
+            })
+            .collect();
+        view.version = 2;
+        view.revision += 1;
+        view.source_suggestion_id = Some(suggestion.suggestion_id);
+        self.save_view(&view)?;
+        Ok(view)
     }
 }
 
@@ -1524,6 +1599,45 @@ mod tests {
         assert!(first.suggestions[0].links.iter().any(|link| {
             link.resolver == "world_to_raster_pixel" && link.exactness == LinkExactness::Unavailable
         }));
+
+        let accepted = service
+            .create_view_from_suggestion(
+                &first.suggestions[0].suggestion_id,
+                &["ds_point".into(), "ds_cube".into()],
+                None,
+            )
+            .unwrap();
+        assert_eq!(accepted.version, 2);
+        assert_eq!(accepted.revision, 2);
+        assert_eq!(accepted.panels.len(), 3);
+        assert_eq!(accepted.link_rules.len(), 2);
+        assert_eq!(
+            accepted.source_suggestion_id.as_deref(),
+            Some(first.suggestions[0].suggestion_id.as_str())
+        );
+        assert!(accepted.link_rules.iter().any(|link| {
+            link.resolver == "world_to_raster_pixel" && link.exactness == LinkExactness::Unavailable
+        }));
+        let rgb_layer = accepted
+            .layers
+            .iter()
+            .find(|layer| layer.dataset_id.0 == "ds_cube")
+            .unwrap();
+        assert_eq!(rgb_layer.encoding["source_shape"], json!([500, 500, 5]));
+        assert_eq!(rgb_layer.encoding["red_band"], 3);
+        assert_eq!(
+            service.get_view(&accepted.view_id.0).unwrap().panels,
+            accepted.panels
+        );
+
+        assert!(matches!(
+            service.create_view_from_suggestion(
+                "suggest_client_invented",
+                &["ds_point".into(), "ds_cube".into()],
+                None,
+            ),
+            Err(WildDatumError::NotFound(_))
+        ));
     }
 
     #[test]

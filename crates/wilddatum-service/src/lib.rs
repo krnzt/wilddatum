@@ -711,6 +711,9 @@ impl WildDatumService {
             camera: None,
             active_timeline: None,
             provenance_visible: true,
+            panels: vec![],
+            link_rules: vec![],
+            source_suggestion_id: None,
         };
         self.save_view(&view)?;
         Ok(view)
@@ -789,36 +792,8 @@ impl WildDatumService {
                 "layer {layer_id} is not hyperspectral or tensor data"
             )));
         }
-        if let Some(dataset_path) = encoding
-            .get("cube_array")
-            .or_else(|| encoding.get("hdf5_dataset"))
-            .and_then(Value::as_str)
-            && let Some(descriptor) = self
-                .get_manifest(&layer.dataset_id.0)?
-                .cubes
-                .into_iter()
-                .find(|descriptor| descriptor.array_path == dataset_path)
-            && descriptor.axes.len() == 3
-        {
-            let y_axis = encoding.get("y_axis").and_then(Value::as_u64).unwrap_or(0) as usize;
-            let x_axis = encoding.get("x_axis").and_then(Value::as_u64).unwrap_or(1) as usize;
-            let shape = descriptor
-                .axes
-                .iter()
-                .map(|axis| axis.length)
-                .collect::<Vec<_>>();
-            let y = shape.get(y_axis).copied().unwrap_or(0);
-            let x = shape.get(x_axis).copied().unwrap_or(0);
-            const MAX_PREVIEW_EDGE: u64 = 1_024;
-            encoding.insert("source_shape".into(), json!(shape));
-            encoding.insert(
-                "preview_stride".into(),
-                json!([
-                    y.div_ceil(MAX_PREVIEW_EDGE).max(1),
-                    x.div_ceil(MAX_PREVIEW_EDGE).max(1)
-                ]),
-            );
-        }
+        let manifest = self.get_manifest(&layer.dataset_id.0)?;
+        enrich_cube_encoding(&manifest, &mut encoding);
         layer.encoding = encoding;
         view.revision += 1;
         self.save_view(&view)?;
@@ -952,6 +927,41 @@ impl WildDatumService {
         }
         Ok(values)
     }
+}
+
+fn enrich_cube_encoding(manifest: &DatasetManifest, encoding: &mut BTreeMap<String, Value>) {
+    let Some(dataset_path) = encoding
+        .get("cube_array")
+        .or_else(|| encoding.get("hdf5_dataset"))
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let Some(descriptor) = manifest
+        .cubes
+        .iter()
+        .find(|descriptor| descriptor.array_path == dataset_path && descriptor.axes.len() == 3)
+    else {
+        return;
+    };
+    let y_axis = encoding.get("y_axis").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let x_axis = encoding.get("x_axis").and_then(Value::as_u64).unwrap_or(1) as usize;
+    let shape = descriptor
+        .axes
+        .iter()
+        .map(|axis| axis.length)
+        .collect::<Vec<_>>();
+    let y = shape.get(y_axis).copied().unwrap_or(0);
+    let x = shape.get(x_axis).copied().unwrap_or(0);
+    const MAX_PREVIEW_EDGE: u64 = 1_024;
+    encoding.insert("source_shape".into(), json!(shape));
+    encoding.insert(
+        "preview_stride".into(),
+        json!([
+            y.div_ceil(MAX_PREVIEW_EDGE).max(1),
+            x.div_ceil(MAX_PREVIEW_EDGE).max(1)
+        ]),
+    );
 }
 
 fn primary_view_modality(modalities: &[Modality]) -> Modality {
