@@ -23,7 +23,7 @@ semantics are ambiguous.
 | HDF5/NetCDF-4 | hierarchy + arrays | bounded N-D hyperslab | mapped band/RGB | Arbitrary rank is queryable; rendering currently expects one mapped rank-3 image cube |
 | NetCDF-3 | variables + dimensions | bounded N-D slice | mapped band/RGB | Pure-Rust reader currently decodes the whole source variable and rejects variables over the safety budget |
 | Zarr v2/v3 directory | hierarchy + arrays | bounded N-D slice | mapped band/RGB | Chunk-aware bounding reads; symbolic links are rejected during fingerprinting |
-| ERDDAP tabledap CSV | remote metadata + approved subset | yes after materialization | tabular/time-series | Requested variables and six comparison operators are validated; generated subsets have no reliable byte estimate |
+| ERDDAP tabledap CSV | remote metadata + approved subset | yes after materialization | tabular/time-series or linked profile/trajectory | Requested variables and six comparison operators are validated; generated subsets have no reliable byte estimate |
 | ERDDAP tabledap/griddap NetCDF | remote metadata + approved subset | bounded N-D slice after materialization | mapped band/RGB where axes are configured | Index/value axis slices are validated; upstream is live and the local BLAKE3 object is the reproducible byte identity |
 
 All query responses are bounded and persisted as opaque results. Large data are
@@ -77,6 +77,47 @@ reported pick position remains useful spatial context, but it is not treated as
 the exact logged point coordinate. Unknown/community Rerun layers fall back to
 a source-precision spatial envelope.
 
+## Linked trajectories and vertical profiles
+
+`profile_trajectory_v1` is a versioned visualization recipe over a delimited
+source, not a new `Modality`. It currently accepts CSV and TSV datasets whose
+view layer is tabular, time-series, or trajectory/vector data. A recipe names:
+
+- trajectory and profile identifier fields;
+- optional time plus required latitude and longitude fields;
+- one vertical field, `positive_up` or `positive_down`, unit, and textual fill
+  values; and
+- one displayed value field, unit, optional native QC field, accepted QC codes,
+  and textual fill values.
+
+Configuration reads the authoritative source, verifies every named column, and
+requires finite latitude, longitude, vertical, and value observations. Empty,
+configured fill, and non-finite values are omitted. QC-rejected observations
+remain visible and selectable in amber but do not participate in the green
+trajectory/profile line geometry. Native QC fields are never normalized away.
+
+The map uses Rerun `MapView` with source longitude/latitude in EPSG:4326. The
+profile uses the raw vertical and value coordinates in a `Spatial2DView`; a
+positive-down axis is displayed downward without changing the stored source
+value. Rerun currently applies an equal raw-coordinate aspect, so a temperature
+range of a few degrees against thousands of decibars can look like a nearly
+vertical line. EcoScope preserves the honest axes instead of inventing a visual
+scale transform.
+
+Each finite observation is logged with its zero-based delimited source-record
+index as the Rerun instance ID. A browser pick supplies only the entity path,
+instance ID, mapping kind, and Rerun version. The service verifies the view,
+dataset, layer, entity suffix, mapping stride, pinned version, and source bounds
+before creating an exact `SourceRows` query. Results retain original strings in
+an envelope shaped like `{source_index, values}`; they do not coerce identifiers,
+QC codes, or provider unit rows.
+
+Rendering rejects inputs above 100,000 source records. One viewer pick queries
+one row; direct exact-row queries accept at most 10,000 unique indices. The same
+RRD and exact-row contract are used by native Rerun and Rerun Web Viewer. General
+depth/interval brushing, multiple displayed values, Parquet row identity, and
+profile-aware downsampling are not implemented yet.
+
 ## Local-source privacy and identity
 
 Files are fingerprinted with streaming BLAKE3. Zarr trees are fingerprinted
@@ -105,7 +146,9 @@ ERDDAP `cdm_data_type` metadata supplies conservative modality hints:
 
 These hints do not invent a visualization grammar. Grid NetCDF uses explicit
 cube/axis configuration when metadata is ambiguous. Trajectory and profile CSV
-can be queried immediately, while dedicated linked map/profile layouts and
-QC-aware defaults remain roadmap work. Native variables, units, QC columns,
-global attributes, license, and citation stay available in the manifest rather
-than being flattened into the rendered scene.
+can be queried immediately and configured into the linked recipe above. CF
+`cf_role`, `standard_name`, units, axes, and fill values are preserved as
+variable-level manifest metadata, but EcoScope does not silently choose a value
+or institutional QC policy. Native variables, QC columns, global attributes,
+license, and citation remain available rather than being flattened into the
+rendered scene.

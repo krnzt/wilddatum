@@ -72,6 +72,24 @@ The boundary is deliberately honest about what the viewer API exposes:
   verified mapping is absent, point picks become source-precision spatial
   queries.
 
+### Profile/trajectory recipe boundary
+
+Linked geographic trajectories and vertical profiles deliberately reuse this
+boundary. `configure_profile_trajectory_view` validates a typed
+`profile_trajectory_v1` recipe against the immutable CSV/TSV source, then the
+service—not the client—adds a `source_row_index` selection mapping. The Rerun
+adapter parses observations in source order, groups line geometry by
+trajectory/profile identifiers, keeps native QC on pickable observations, and
+logs source-record indices as instance IDs.
+
+The web shell does not derive or transmit a trusted source index. It emits the
+selected observation entity and instance together with the mapping kind and
+pinned Rerun version. `query_selection` reopens authoritative view and manifest
+state, verifies that exact mapping, checks multiplication/bounds, and streams
+the requested delimited record as uncoerced strings. This makes a pick in either
+the map or profile panel reproducible without asking an agent to interpret
+pixels or trust browser-authored scientific state.
+
 ## Data lifecycle
 
 ```text
@@ -84,6 +102,32 @@ An exact remote plan has a BLAKE3 hash. Approval requires that exact hash. NEON
 downloads stream into a partial object while BLAKE3, MD5, and CRC32C are
 computed, then are verified and atomically promoted.
 Durable source identity never depends on an expiring download URL.
+
+Generic ERDDAP downloads use the same partial-object discipline with BLAKE3 and
+a configurable streaming byte ceiling. Catalog resolution preserves global and
+variable-level CF metadata; materialization copies both into the durable
+manifest so recipes can be constructed from `cf_role`, `standard_name`, units,
+axes, and fill values without coupling Rerun to Argo or another institution.
+
+## MCP profile workflow
+
+Local files enter out of band through `ecoscope import`; remote data use the
+normal catalog, plan, approval, and materialization tools. From the resulting
+opaque dataset ID, every MCP host follows the same agent-native sequence:
+
+```text
+create_view(dataset_id)
+  -> configure_profile_trajectory_view(view_id, expected_revision, fields/QC)
+  -> open_view(view_id)
+  -> human selects an observation in Rerun
+  -> inspect_view(view_id)
+  -> query_selection(selection_id)
+  -> exact source row + provenance-linked result handle
+```
+
+The tool is provider-neutral. A local CTD cast and Euro-Argo `ArgoFloats` CSV
+use identical recipe and selection semantics; only materialization provenance
+and native field names differ.
 
 ## Provider contract
 

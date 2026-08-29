@@ -45,6 +45,8 @@ is authoritative view state and `SemanticSelection` is authoritative interaction
 state. A Rerun recording is a regenerable rendering artifact. For verified
 EcoScope point batches, an instance pick maps back to an exact LAS/LAZ source
 row; for a mapped cube, an image click maps back to the complete source spectrum.
+For linked trajectories and vertical profiles, a map or profile point maps back
+to the exact original CSV/TSV record, including provider-native QC values.
 
 ## What works in the alpha
 
@@ -59,7 +61,7 @@ row; for a mapped cube, an image click maps back to the complete source spectrum
 - Arrow/DataFusion tabular queries, spatial raster/vector queries, indexed COPC
   reads, and bounded HDF5/NetCDF/Zarr N-dimensional slices.
 - Native and browser Rerun views for tables, images, GeoTIFFs, vectors, LiDAR,
-  and mapped scientific cubes.
+  mapped scientific cubes, and linked geographic trajectories/vertical profiles.
 - Durable human selections that can be converted into provenance-linked source
   queries and exported as CSV, Parquet, COG, or RO-Crate where applicable.
 - Language-neutral community provider subprocesses with a provider-neutral v2
@@ -156,6 +158,42 @@ checksum, display name, scientific metadata, and provenance. The same path
 supports the raster, vector, point-cloud, image, and cube formats in the
 [format matrix](docs/FORMATS.md).
 
+## Linked trajectories and vertical profiles
+
+Profile/trajectory rendering is a validated recipe over ordinary CSV or TSV
+data, not a provider-specific renderer. Start locally with the deterministic
+demo:
+
+```bash
+ecoscope demo profile-trajectory
+```
+
+The agent workflow is the same for a local import or materialized ERDDAP table:
+
+```text
+user imports a local CSV/TSV, or agent materializes a provider subset
+  → create_view
+  → configure_profile_trajectory_view
+  → open_view
+  → human selects a map or profile observation
+  → inspect_view
+  → query_selection
+  → exact source record with native identifiers, values, units, and QC
+```
+
+The recipe explicitly names trajectory/profile identifiers, time, longitude,
+latitude, vertical coordinate and direction, one displayed value, units, fill
+values, and accepted native QC codes. EcoScope validates those fields against
+the source before authoring the exact-row mapping; the browser cannot declare a
+source index trusted.
+
+![EcoScope linked trajectory map and vertical temperature profile with a real Rerun point selection serialized as exact-row agent context](docs/assets/profile-trajectory-explorer.png)
+
+_The shipped synthetic profile demo in Rerun Web Viewer. The selected profile
+observation is persisted as a `rows` selection containing only its Rerun entity,
+instance, mapping kind, and pinned version; the service independently resolves
+that instance to the original delimited source row._
+
 ## NEON
 
 Metadata discovery does not require credentials. Exact file planning and
@@ -168,6 +206,11 @@ downloads use a NEON API token stored outside model context:
 The prompt does not echo the token. EcoScope stores it in the operating-system
 keychain and sends it upstream only in the `X-API-Token` header. Headless systems
 can inject `NEON_API_TOKEN` through their secret manager.
+
+`ecoscope doctor` time-boxes its noninteractive keychain probe. A
+`neon_connected: null` result with `neon_credential_probe: "timed_out"` means the
+operating system did not answer the readiness probe; it does not expose or erase
+the stored credential.
 
 ## Public ERDDAP infrastructures
 
@@ -207,7 +250,9 @@ the exact redirect chain, and returns one URL for approval. Call `approve_plan`
 with the returned hash and then `materialize_dataset`. The stored object is named
 by its BLAKE3 digest, while the manifest retains the decoded query, redirect
 chain, ETag, Last-Modified value, access time, server version, global attributes,
-license, and citation.
+variable-level CF attributes, license, and citation. Downloads stream through a
+configurable hard byte ceiling (512 MiB by default) and failed or oversized
+partials are removed.
 
 Grid subsets use `protocol: "griddap"` and explicit arrays. Each axis can use
 integer indices or ERDDAP value coordinates:
@@ -294,7 +339,11 @@ MCP input across providers.
   not yet contain a provider-quality multiresolution hierarchy.
 - Generic ERDDAP planning does not infer institution-specific station/location
   dimensions or translate arbitrary polygons. Use typed tabledap constraints or
-  griddap slices; dedicated linked trajectory/profile views remain roadmap work.
+  griddap slices. CF profile roles are preserved, but choosing the scientific
+  value/QC policy remains an explicit recipe rather than an automatic guess.
+- Linked profile rendering currently accepts CSV/TSV, one displayed value field,
+  and at most 100,000 source rows. Rerun's raw-value 2D aspect can make a narrow
+  value range look horizontally compressed against a deep vertical range.
 - The pure-Rust NetCDF-3 adapter bounds whole-variable decoding because its
   reader does not currently provide subset I/O.
 
@@ -337,10 +386,13 @@ cargo test -p ecoscope-rerun --test official_neon_fixtures -- --ignored
 ```
 
 The maintained ERDDAP presets also have opt-in live drift checks. They search
-and inspect all three services and materialize a tiny redirected EMSO subset:
+and inspect all three services, materialize a tiny redirected EMSO subset, and
+run a bounded current Euro-Argo profile through CF discovery, materialization,
+recipe validation, and Rerun rendering:
 
 ```bash
 cargo test -p ecoscope-provider-erddap --test live -- --ignored
+cargo test -p ecoscope-provider-erddap --test argo_profile_smoke -- --ignored
 ```
 
 Build local MCPB and archive artifacts after the Rust and browser builds with
