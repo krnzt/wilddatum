@@ -58,3 +58,18 @@ Subprocess installation is a code-trust decision. Origin validation, cleared
 environment variables, timeouts, and response limits reduce accidental scope;
 they are not an OS sandbox. Credentials remain in EcoScope-owned brokers and
 are never transported to a community subprocess.
+
+## Provider-neutral materialization vocabulary
+
+The canonical request and manifest do not use NEON product, site, or month
+names. They use resource identity/version, locations, temporal bounds, spatial
+geometry, variables, and an explicit provider-options map. Provider-native
+terms such as NEON `productCode`, ERDDAP `datasetID`, or an RI-specific package
+selector are translated only inside the responsible adapter.
+
+This prevents the first provider from defining every future provider's data
+model while still preserving native state. Provider options and metadata remain
+structured JSON, source records retain native checksums and QC metadata, and
+the MCP tool exposes the shared fields as a typed schema. Persisted alpha JSON
+is read through aliases, but all newly serialized records and subprocess
+protocol-v2 messages use the neutral vocabulary.
