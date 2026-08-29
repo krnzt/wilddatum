@@ -192,14 +192,14 @@ impl NeonProvider {
         }
 
         let start = request
-            .start_month
+            .temporal_start
             .as_deref()
-            .ok_or_else(|| EcoScopeError::Invalid("start_month is required for NEON".into()))?;
+            .ok_or_else(|| EcoScopeError::Invalid("temporal_start is required for NEON".into()))?;
         let end = request
-            .end_month
+            .temporal_end
             .as_deref()
-            .ok_or_else(|| EcoScopeError::Invalid("end_month is required for NEON".into()))?;
-        if request.sites.is_empty() {
+            .ok_or_else(|| EcoScopeError::Invalid("temporal_end is required for NEON".into()))?;
+        if request.locations.is_empty() {
             return Err(EcoScopeError::Invalid(
                 "at least one NEON site is required".into(),
             ));
@@ -209,8 +209,8 @@ impl NeonProvider {
                 self.client
                     .post(format!("{}/data/query", self.base_url))
                     .json(&Query {
-                        product_code: &request.product_code,
-                        site_codes: &request.sites,
+                        product_code: &request.resource_id,
+                        site_codes: &request.locations,
                         start_date_month: start,
                         end_date_month: end,
                         release: &request.release,
@@ -317,7 +317,7 @@ impl NeonProvider {
         } else {
             tokio::fs::rename(&temporary, &destination).await?;
         }
-        let mut metadata = BTreeMap::new();
+        let mut metadata = file.metadata.clone();
         if let Some(checksum) = &file.checksum {
             metadata.insert("provider_checksum".into(), serde_json::to_value(checksum)?);
         }
@@ -332,8 +332,8 @@ impl NeonProvider {
                 value: digest,
             },
             media_type: None,
-            site: file.site.clone(),
-            month: file.month.clone(),
+            location: file.location.clone(),
+            temporal_partition: file.temporal_partition.clone(),
             metadata,
         })
     }
@@ -372,19 +372,21 @@ impl NeonProvider {
             return Err(EcoScopeError::Conflict("materialization cancelled".into()));
         }
         let modalities = self
-            .inspect_product(&plan.request.product_code)
+            .inspect_product(&plan.request.resource_id)
             .await
             .map(|product| product.modalities)
             .unwrap_or_else(|_| vec![Modality::Unknown]);
+        let provider_metadata =
+            BTreeMap::from([("neon_request".into(), serde_json::to_value(&plan.request)?)]);
         Ok(DatasetManifest {
             dataset_id: DatasetId::new(),
             provider: ProviderKind::Neon,
-            product_code: plan.request.product_code.clone(),
-            product_revision: None,
+            resource_id: plan.request.resource_id.clone(),
+            resource_version: None,
             modalities,
-            sites: plan.request.sites.clone(),
-            start_month: plan.request.start_month.clone(),
-            end_month: plan.request.end_month.clone(),
+            locations: plan.request.locations.clone(),
+            temporal_start: plan.request.temporal_start.clone(),
+            temporal_end: plan.request.temporal_end.clone(),
             release: plan.request.release.clone(),
             package: Some(plan.request.package.clone()),
             include_provisional: plan.request.include_provisional,
@@ -402,7 +404,7 @@ impl NeonProvider {
             citation: Some(CitationMetadata {
                 text: format!(
                     "National Ecological Observatory Network (NEON), {}{}",
-                    plan.request.product_code,
+                    plan.request.resource_id,
                     plan.request
                         .release
                         .as_deref()
@@ -412,9 +414,10 @@ impl NeonProvider {
                 doi: None,
                 url: Some(format!(
                     "https://data.neonscience.org/data-products/{}",
-                    plan.request.product_code
+                    plan.request.resource_id
                 )),
             }),
+            provider_metadata,
             created_at: Utc::now(),
         })
     }
@@ -675,8 +678,9 @@ fn collect_files(
                     size_bytes: object.get("size").and_then(Value::as_u64),
                     checksum,
                     download_url: Some(url.into()),
-                    site,
-                    month,
+                    location: site,
+                    temporal_partition: month,
+                    metadata: BTreeMap::new(),
                     expires_at: None,
                 });
                 return;
@@ -731,7 +735,7 @@ mod tests {
         let mut files = vec![];
         collect_files(&value, None, None, &mut files);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].site.as_deref(), Some("HARV"));
+        assert_eq!(files[0].location.as_deref(), Some("HARV"));
     }
 
     #[test]
@@ -819,8 +823,9 @@ mod tests {
                     value: format!("{:x}", md5::compute(&bytes)),
                 }),
                 download_url: Some(format!("http://{address}/file")),
-                site: Some("HARV".into()),
-                month: Some("2025-01".into()),
+                location: Some("HARV".into()),
+                temporal_partition: Some("2025-01".into()),
+                metadata: BTreeMap::new(),
                 expires_at: None,
             })
             .await
