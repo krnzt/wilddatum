@@ -2447,6 +2447,7 @@ dependencies = [
  "arrow-ipc",
  "arrow-json",
  "arrow-schema",
+ "csv",
  "datafusion",
  "ecoscope-core",
  "geodatafusion",

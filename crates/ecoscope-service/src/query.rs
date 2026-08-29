@@ -49,6 +49,19 @@ impl EcoScopeService {
                 let count = value.get("returned_rows").and_then(Value::as_u64);
                 (value, count, "application/json")
             }
+            DatasetQuery::SourceRows {
+                source_indices,
+                select,
+            } => {
+                let output = ecoscope_query::execute_source_rows(
+                    &path,
+                    &source.original_name,
+                    source_indices,
+                    select,
+                )?;
+                let row_count = output.matched_rows;
+                (output.payload, Some(row_count), "application/json")
+            }
             DatasetQuery::Table {
                 select,
                 filters,
@@ -1567,6 +1580,7 @@ fn bounded_preview(payload: &Value) -> Value {
 }
 
 fn table_parts(payload: &Value) -> Result<(Vec<String>, TabularRows)> {
+    let enveloped = payload.get("row_envelope").is_some();
     let columns = payload
         .get("columns")
         .and_then(Value::as_array)
@@ -1585,9 +1599,14 @@ fn table_parts(payload: &Value) -> Result<(Vec<String>, TabularRows)> {
         .ok_or_else(|| EcoScopeError::Invalid("result is not tabular".into()))?
         .iter()
         .map(|row| {
-            row.as_object()
-                .cloned()
-                .ok_or_else(|| EcoScopeError::Invalid("invalid result row".into()))
+            (if enveloped {
+                row.get("values").unwrap_or(&Value::Null)
+            } else {
+                row
+            })
+            .as_object()
+            .cloned()
+            .ok_or_else(|| EcoScopeError::Invalid("invalid result row".into()))
         })
         .collect::<Result<Vec<_>>>()?;
     Ok((columns, rows))
@@ -1748,6 +1767,71 @@ mod tests {
             .unwrap();
         assert!(export.artifact.starts_with("ecoscope://exports/"));
         assert!(export.manifest_artifact.is_some());
+    }
+
+    #[tokio::test]
+    async fn source_rows_preserve_exact_indices_order_and_native_fields() {
+        let (directory, service) = service();
+        let path = directory.path().join("native-observations.tsv");
+        let mut file = File::create(&path).unwrap();
+        writeln!(
+            file,
+            "platform\tpressure\tpres_qc\ttemperature\ttemp_qc\tsalinity\tpsal_qc"
+        )
+        .unwrap();
+        for index in 0..8 {
+            writeln!(
+                file,
+                "FLOAT_001\t{}\t1\t{}\t{}\t{}\t1",
+                index * 10,
+                if index == 0 { "01.00" } else { "18.72" },
+                if index == 7 { "4" } else { "1" },
+                35.0 + index as f64 / 100.0,
+            )
+            .unwrap();
+        }
+        let manifest = service.import_local_file(&path).await.unwrap();
+
+        let result = service
+            .query_dataset(
+                &manifest.dataset_id.0,
+                DatasetQuery::SourceRows {
+                    source_indices: vec![7, 0],
+                    select: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.row_count, Some(2));
+        assert_eq!(result.preview["rows"][0]["source_index"], 7);
+        assert_eq!(result.preview["rows"][0]["values"]["pres_qc"], "1");
+        assert_eq!(result.preview["rows"][0]["values"]["temp_qc"], "4");
+        assert_eq!(result.preview["rows"][0]["values"]["psal_qc"], "1");
+        assert_eq!(result.preview["rows"][1]["source_index"], 0);
+        assert_eq!(result.preview["rows"][1]["values"]["temperature"], "01.00");
+        assert_eq!(result.artifacts.len(), 1);
+
+        let export = service
+            .export_result(ExportRequest {
+                result_id: result.result_id,
+                format: ExportFormat::Csv,
+                include_provenance: true,
+                include_reproduction_code: true,
+            })
+            .unwrap();
+        assert!(export.manifest_artifact.is_some());
+        let exported = std::fs::read_to_string(
+            service
+                .paths()
+                .exports_dir
+                .join(format!("{}.csv", export.export_id)),
+        )
+        .unwrap();
+        assert!(
+            exported.starts_with("platform,pressure,pres_qc,temperature,temp_qc,salinity,psal_qc")
+        );
+        assert!(exported.contains("FLOAT_001,70,1,18.72,4,35.07,1"));
     }
 
     #[tokio::test]

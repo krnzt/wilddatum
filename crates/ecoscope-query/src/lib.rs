@@ -1,6 +1,11 @@
 //! Typed, bounded tabular query execution for local and provider materialized assets.
 
-use std::{fs::File, path::Path, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::File,
+    path::Path,
+    sync::Arc,
+};
 
 use arrow_array::RecordBatch;
 use arrow_ipc::{reader::FileReader, writer::FileWriter};
@@ -14,12 +19,163 @@ use ecoscope_core::{AggregateSpec, EcoScopeError, QueryFilter, Result, SortSpec}
 use serde_json::{Map, Value, json};
 
 pub const MAX_RESULT_ROWS: usize = 100_000;
+pub const MAX_SOURCE_ROWS: usize = 10_000;
 
 #[derive(Debug, Clone)]
 pub struct TabularQueryOutput {
     pub batches: Vec<RecordBatch>,
     pub matched_rows: u64,
     pub payload: Value,
+}
+
+/// Read exact zero-based records from the original delimited source in one
+/// streaming pass. Values remain strings so identifiers, sentinel values, and
+/// provider-native QC encodings survive without type coercion.
+pub fn execute_source_rows(
+    path: &Path,
+    original_name: &str,
+    source_indices: &[u64],
+    select: &[String],
+) -> Result<TabularQueryOutput> {
+    if source_indices.is_empty() {
+        return Err(EcoScopeError::Invalid(
+            "source_rows requires at least one source index".into(),
+        ));
+    }
+    if source_indices.len() > MAX_SOURCE_ROWS {
+        return Err(EcoScopeError::Invalid(format!(
+            "source_rows accepts at most {MAX_SOURCE_ROWS} indices"
+        )));
+    }
+    let unique = source_indices.iter().copied().collect::<BTreeSet<_>>();
+    if unique.len() != source_indices.len() {
+        return Err(EcoScopeError::Invalid(
+            "source_rows indices must be unique".into(),
+        ));
+    }
+
+    let extension = Path::new(original_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let delimiter = match extension.as_str() {
+        "csv" => b',',
+        "tsv" => b'\t',
+        _ => {
+            return Err(EcoScopeError::Invalid(format!(
+                "source_rows currently supports original CSV and TSV sources; got {extension}"
+            )));
+        }
+    };
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(delimiter)
+        .from_path(path)
+        .map_err(csv_error)?;
+    let headers = reader.headers().map_err(csv_error)?.clone();
+    let header_names = headers.iter().map(str::to_owned).collect::<Vec<_>>();
+    if header_names.iter().collect::<BTreeSet<_>>().len() != header_names.len() {
+        return Err(EcoScopeError::Invalid(
+            "source_rows cannot represent duplicate CSV/TSV header names".into(),
+        ));
+    }
+    let projected = if select.is_empty() {
+        header_names.clone()
+    } else {
+        select.to_vec()
+    };
+    let header_positions = header_names
+        .iter()
+        .enumerate()
+        .map(|(position, name)| (name.as_str(), position))
+        .collect::<BTreeMap<_, _>>();
+    let projected_positions = projected
+        .iter()
+        .map(|field| {
+            header_positions
+                .get(field.as_str())
+                .copied()
+                .ok_or_else(|| EcoScopeError::Invalid(format!("unknown source_rows field {field}")))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if projected.iter().collect::<BTreeSet<_>>().len() != projected.len() {
+        return Err(EcoScopeError::Invalid(
+            "source_rows selected fields must be unique".into(),
+        ));
+    }
+
+    let wanted = source_indices
+        .iter()
+        .enumerate()
+        .map(|(request_position, source_index)| (*source_index, request_position))
+        .collect::<BTreeMap<_, _>>();
+    let largest = *wanted
+        .last_key_value()
+        .expect("non-empty source indices checked above")
+        .0;
+    let mut found = vec![None; source_indices.len()];
+    let mut found_count = 0_usize;
+    for (source_index, record) in reader.records().enumerate() {
+        let source_index = source_index as u64;
+        if source_index > largest || found_count == found.len() {
+            break;
+        }
+        let Some(&request_position) = wanted.get(&source_index) else {
+            continue;
+        };
+        let record = record.map_err(csv_error)?;
+        let values = projected
+            .iter()
+            .zip(&projected_positions)
+            .map(|(field, position)| {
+                (
+                    field.clone(),
+                    Value::String(record.get(*position).unwrap_or_default().to_owned()),
+                )
+            })
+            .collect::<Map<_, _>>();
+        found[request_position] = Some(json!({
+            "source_index": source_index,
+            "values": values
+        }));
+        found_count += 1;
+    }
+    if found_count != found.len() {
+        let missing = source_indices
+            .iter()
+            .zip(&found)
+            .filter_map(|(index, row)| row.is_none().then_some(*index))
+            .collect::<Vec<_>>();
+        return Err(EcoScopeError::Invalid(format!(
+            "source_rows indices are outside the source: {missing:?}"
+        )));
+    }
+    let rows = found
+        .into_iter()
+        .map(|row| row.expect("all requested source rows were found"))
+        .collect::<Vec<_>>();
+    let returned_rows = rows.len();
+    Ok(TabularQueryOutput {
+        batches: vec![],
+        matched_rows: returned_rows as u64,
+        payload: json!({
+            "columns": projected,
+            "row_envelope": {
+                "source_index": "zero-based data-record position in the original source",
+                "values": "uncoerced source field values"
+            },
+            "rows": rows,
+            "returned_rows": returned_rows,
+            "matched_rows": returned_rows,
+            "truncated": false,
+            "deterministic_order": true,
+            "engine": "ecoscope-source-rows-1"
+        }),
+    })
+}
+
+fn csv_error(error: csv::Error) -> EcoScopeError {
+    EcoScopeError::Invalid(format!("cannot read delimited source: {error}"))
 }
 
 /// Execute an exact spatial predicate against a GeoParquet source after its
@@ -580,6 +736,67 @@ mod tests {
         let ipc = directory.path().join("result.arrow");
         write_arrow_ipc(&ipc, &output.batches).unwrap();
         assert!(ipc.metadata().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn source_rows_stream_once_preserve_order_and_do_not_coerce_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("opaque-object");
+        let mut file = File::create(&path).unwrap();
+        writeln!(file, "site\tvalue\tnative_qc\tnote").unwrap();
+        writeln!(file, "HARV\t01.00\tpass\tfirst").unwrap();
+        writeln!(file, "ABBY\t-9999\tmissing\tsecond").unwrap();
+        writeln!(file, "OSBS\t18.72\tsuspect\tthird").unwrap();
+        writeln!(file, "KONZ\t12.50\tpass\tfourth").unwrap();
+
+        let output = execute_source_rows(&path, "observations.tsv", &[3, 1], &[]).unwrap();
+
+        assert!(output.batches.is_empty());
+        assert_eq!(output.matched_rows, 2);
+        assert_eq!(output.payload["rows"][0]["source_index"], 3);
+        assert_eq!(output.payload["rows"][0]["values"]["native_qc"], "pass");
+        assert_eq!(output.payload["rows"][1]["source_index"], 1);
+        assert_eq!(output.payload["rows"][1]["values"]["value"], "-9999");
+        assert_eq!(output.payload["columns"][3], "note");
+    }
+
+    #[test]
+    fn source_rows_validate_identity_projection_and_bounds() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source");
+        let mut file = File::create(&path).unwrap();
+        writeln!(file, "site,value").unwrap();
+        writeln!(file, "HARV,1").unwrap();
+
+        let duplicate = execute_source_rows(&path, "observations.csv", &[0, 0], &[])
+            .unwrap_err()
+            .to_string();
+        assert!(duplicate.contains("unique"));
+        let empty = execute_source_rows(&path, "observations.csv", &[], &[])
+            .unwrap_err()
+            .to_string();
+        assert!(empty.contains("at least one"));
+        let excessive = execute_source_rows(
+            &path,
+            "observations.csv",
+            &(0..=MAX_SOURCE_ROWS as u64).collect::<Vec<_>>(),
+            &[],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(excessive.contains("at most 10000"));
+        let unknown = execute_source_rows(&path, "observations.csv", &[0], &["qc".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(unknown.contains("unknown source_rows field qc"));
+        let outside = execute_source_rows(&path, "observations.csv", &[4], &[])
+            .unwrap_err()
+            .to_string();
+        assert!(outside.contains("outside the source: [4]"));
+        let unsupported = execute_source_rows(&path, "observations.parquet", &[0], &[])
+            .unwrap_err()
+            .to_string();
+        assert!(unsupported.contains("original CSV and TSV"));
     }
 
     #[tokio::test]

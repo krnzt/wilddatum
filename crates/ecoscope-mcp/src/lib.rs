@@ -1436,6 +1436,33 @@ mod tests {
             .and_then(|value| value.get("result_id"))
             .and_then(Value::as_str)
             .expect("query result ID");
+        let exact_rows = client
+            .call_tool(
+                CallToolRequestParams::new("query_dataset").with_arguments(
+                    json!({
+                        "dataset_id": dataset.dataset_id,
+                        "query": {
+                            "kind": "source_rows",
+                            "source_indices": [2, 0],
+                            "select": ["site", "value"]
+                        }
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+            )
+            .await?;
+        assert_ne!(exact_rows.is_error, Some(true));
+        let exact_preview = exact_rows
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("preview"))
+            .expect("exact source rows preview");
+        assert_eq!(exact_preview["rows"][0]["source_index"], 2);
+        assert_eq!(exact_preview["rows"][0]["values"]["site"], "ABBY");
+        assert_eq!(exact_preview["rows"][1]["source_index"], 0);
+        assert_eq!(exact_preview["rows"][1]["values"]["value"], "1");
         let export = client
             .call_tool(
                 CallToolRequestParams::new("export_result").with_arguments(

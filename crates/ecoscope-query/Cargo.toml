@@ -11,6 +11,7 @@ arrow-ipc.workspace = true
 arrow-json.workspace = true
 arrow-schema.workspace = true
 datafusion.workspace = true
+csv.workspace = true
 ecoscope-core = { path = "../ecoscope-core" }
 geodatafusion.workspace = true
 geodatafusion-geoparquet.workspace = true

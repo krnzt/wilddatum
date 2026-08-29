@@ -682,6 +682,17 @@ pub enum DatasetQuery {
         #[serde(default = "default_preview_rows")]
         limit: u32,
     },
+    /// Retrieve exact zero-based records from the original CSV/TSV source.
+    ///
+    /// Viewer adapters use this after resolving picked instances back to their
+    /// durable source positions. An empty projection preserves every native
+    /// field, including provider-specific quality-control columns.
+    SourceRows {
+        #[serde(default)]
+        source_indices: Vec<u64>,
+        #[serde(default)]
+        select: Vec<String>,
+    },
     RasterPixel {
         x: u64,
         y: u64,
@@ -948,6 +959,45 @@ mod tests {
         let second = DatasetId::new();
         assert!(first.0.starts_with("ds_"));
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn source_rows_query_has_a_stable_wire_shape() {
+        let query: DatasetQuery = serde_json::from_value(serde_json::json!({
+            "kind": "source_rows",
+            "source_indices": [3, 1],
+            "select": ["temperature", "native_qc"]
+        }))
+        .unwrap();
+        let value = serde_json::to_value(query).unwrap();
+        assert_eq!(value["kind"], "source_rows");
+        assert_eq!(value["source_indices"], serde_json::json!([3, 1]));
+        assert_eq!(value["select"][1], "native_qc");
+        assert_eq!(
+            serde_json::to_value([
+                Modality::Tabular,
+                Modality::TimeSeries,
+                Modality::Raster,
+                Modality::Hyperspectral,
+                Modality::PointCloud,
+                Modality::Vector,
+                Modality::Tensor,
+                Modality::Image,
+                Modality::Unknown,
+            ])
+            .unwrap(),
+            serde_json::json!([
+                "tabular",
+                "time_series",
+                "raster",
+                "hyperspectral",
+                "point_cloud",
+                "vector",
+                "tensor",
+                "image",
+                "unknown"
+            ])
+        );
     }
 
     #[test]
