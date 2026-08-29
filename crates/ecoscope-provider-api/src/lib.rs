@@ -5,7 +5,7 @@ use ecoscope_core::{
 };
 use std::collections::BTreeSet;
 
-pub const PROVIDER_PROTOCOL_VERSION: u32 = 1;
+pub const PROVIDER_PROTOCOL_VERSION: u32 = 2;
 
 pub fn validate_manifest(manifest: &ProviderManifest) -> Result<()> {
     if manifest.schema_version != PROVIDER_PROTOCOL_VERSION {

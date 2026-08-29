@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ecoscope.dev/schemas/dataset-request-v2.schema.json",
+  "title": "EcoScope dataset request v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "resource_id", "package"],
+  "properties": {
+    "provider": {
+      "oneOf": [
+        {"enum": ["neon", "local"]},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["other"],
+          "properties": {
+            "other": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
+    "resource_id": {"type": "string", "minLength": 1},
+    "locations": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": []
+    },
+    "temporal_start": {"type": ["string", "null"]},
+    "temporal_end": {"type": ["string", "null"]},
+    "spatial_filter": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["geojson"],
+          "properties": {
+            "geojson": {"type": "object"}
+          }
+        }
+      ]
+    },
+    "variables": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": []
+    },
+    "release": {"type": ["string", "null"]},
+    "package": {"type": "string", "minLength": 1, "default": "basic"},
+    "include_provisional": {"type": "boolean", "default": false},
+    "provider_options": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": {}
+    }
+  }
+}
