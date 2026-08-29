@@ -83,6 +83,9 @@ test("renders LiDAR and hyperspectral views and records real Rerun picks", async
   expect(cubeSelection.selection.array_path).toBe("/WildDatum/Reflectance");
   expect(cubeSelection.selection.x).toBeGreaterThanOrEqual(0);
   expect(cubeSelection.selection.y).toBeGreaterThanOrEqual(0);
+  await expect(page.locator("#selection")).toContainText("cube_pixel_to_spectrum");
+  await expect(page.locator("#selection")).toContainText('"status": "resolved"');
+  await expect(page.locator("#selection")).toContainText("wavelength_nm");
 
   await stopExplorer();
   explorerUrl = await startExplorer(pointViewId);

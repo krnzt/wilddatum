@@ -403,6 +403,11 @@ pub struct QuerySelectionInput {
     pub point_limit: u64,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SelectionIdInput {
+    pub selection_id: String,
+}
+
 fn default_point_limit() -> u64 {
     100_000
 }
@@ -1222,6 +1227,23 @@ impl WildDatumMcp {
         }
     }
 
+    #[tool(
+        description = "Evaluate applicable EcoViewSpec v2 link rules for a durable selection, materializing provenance-linked results only for supported exact resolvers"
+    )]
+    async fn resolve_selection_links(
+        &self,
+        Parameters(input): Parameters<SelectionIdInput>,
+    ) -> CallToolResult {
+        match self
+            .service
+            .resolve_selection_links(&input.selection_id)
+            .await
+        {
+            Ok(resolution) => bounded_serializable(resolution),
+            Err(error) => tool_error(error),
+        }
+    }
+
     #[tool(description = "Clear all structured selections associated with a visualization")]
     async fn clear_selection(&self, Parameters(input): Parameters<ViewIdInput>) -> CallToolResult {
         match self.service.clear_selections(&input.view_id) {
@@ -1491,6 +1513,7 @@ mod tests {
             "inspect_view",
             "inspect_selection",
             "query_selection",
+            "resolve_selection_links",
             "render_view",
             "open_view",
             "configure_hyperspectral_view",

@@ -38,6 +38,11 @@ struct SelectionEvent {
     summary: Value,
 }
 
+#[derive(Debug, Deserialize)]
+struct SelectionLinkEvent {
+    selection_id: String,
+}
+
 pub struct ServeOptions {
     pub view_id: String,
     pub port: u16,
@@ -67,6 +72,10 @@ pub async fn serve(service: WildDatumService, options: ServeOptions) -> Result<(
     let app = Router::new()
         .route("/api/view", get(get_view))
         .route("/api/selection", get(get_selection).post(post_selection))
+        .route(
+            "/api/selection-links",
+            axum::routing::post(post_selection_links),
+        )
         .route("/api/recording.rrd", get(get_recording))
         .fallback_service(static_files)
         .with_state(state.clone());
@@ -131,6 +140,36 @@ async fn post_selection(
         .save_selection(&state.view_id.0, event.selection, event.summary)
     {
         Ok(selection) => (StatusCode::CREATED, Json(selection)).into_response(),
+        Err(error) => error_response(error.to_string()),
+    }
+}
+
+async fn post_selection_links(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<TokenQuery>,
+    headers: HeaderMap,
+    Json(event): Json<SelectionLinkEvent>,
+) -> Response {
+    if let Err(response) = authorize(&state, &query, &headers, true) {
+        return response.into_response();
+    }
+    match state.service.get_selection(&event.selection_id) {
+        Ok(selection) if selection.view_id == state.view_id => {}
+        Ok(_) | Err(wilddatum_core::WildDatumError::NotFound(_)) => {
+            return (
+                StatusCode::NOT_FOUND,
+                "selection is not part of this explorer view",
+            )
+                .into_response();
+        }
+        Err(error) => return error_response(error.to_string()),
+    }
+    match state
+        .service
+        .resolve_selection_links(&event.selection_id)
+        .await
+    {
+        Ok(resolution) => (StatusCode::CREATED, Json(resolution)).into_response(),
         Err(error) => error_response(error.to_string()),
     }
 }

@@ -50,7 +50,12 @@ viewer.on("selection_change", async (event: SelectionChangeEvent) => {
       summary: {source: "rerun_web_viewer", semantic: selection, raw_event: event}
     })
   });
-  selectionOutput.textContent = JSON.stringify(record, null, 2);
+  const linkResolution = await fetchJson(apiUrl("/api/selection-links"), {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({selection_id: record.selection_id})
+  });
+  selectionOutput.textContent = JSON.stringify({selection: record, link_resolution: linkResolution}, null, 2);
 });
 
 const existingSelection = await fetchJson(apiUrl("/api/selection"));

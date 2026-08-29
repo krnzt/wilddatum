@@ -149,6 +149,11 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
             .iter()
             .any(|tool| tool.name == "create_view_from_suggestion")
     );
+    anyhow::ensure!(
+        tools
+            .iter()
+            .any(|tool| tool.name == "resolve_selection_links")
+    );
     let plan_tool = tools
         .iter()
         .find(|tool| tool.name == "plan_materialization")
@@ -261,7 +266,7 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
         .call_tool(
             CallToolRequestParams::new("record_selection").with_arguments(
                 json!({
-                    "view_id": view_id,
+                    "view_id": accepted["view_id"],
                     "selection": {
                         "type": "cube_pixel",
                         "dataset_id": cube_dataset_id,
@@ -311,6 +316,81 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
             .and_then(Value::as_u64)
             == Some(16)
     );
+    let resolved = client
+        .call_tool(
+            CallToolRequestParams::new("resolve_selection_links").with_arguments(
+                json!({"selection_id": selection_id})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await?;
+    anyhow::ensure!(resolved.is_error != Some(true));
+    let resolved_link = resolved
+        .structured_content
+        .as_ref()
+        .and_then(|value| value.get("links"))
+        .and_then(Value::as_array)
+        .and_then(|links| links.first())
+        .expect("resolved view link");
+    anyhow::ensure!(resolved_link["resolver"] == "cube_pixel_to_spectrum");
+    anyhow::ensure!(resolved_link["exactness"] == "exact");
+    anyhow::ensure!(resolved_link["status"] == "resolved");
+    anyhow::ensure!(resolved_link["result"]["row_count"] == 16);
+
+    let point_selection = client
+        .call_tool(
+            CallToolRequestParams::new("record_selection").with_arguments(
+                json!({
+                    "view_id": accepted["view_id"],
+                    "selection": {
+                        "type": "point_set",
+                        "dataset_id": point_dataset_id,
+                        "spatial_query": {
+                            "geometry": {"type": "Point", "coordinates": [4.0, 4.0, 1.0]},
+                            "source_indices": [0],
+                            "source_index_verified": true
+                        },
+                        "estimated_points": 1
+                    },
+                    "summary": {"source": "release_stdio_smoke"}
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await?;
+    anyhow::ensure!(point_selection.is_error != Some(true));
+    let point_selection_id = point_selection
+        .structured_content
+        .as_ref()
+        .and_then(|value| value.get("selection_id"))
+        .and_then(Value::as_str)
+        .expect("point selection ID");
+    let unavailable = client
+        .call_tool(
+            CallToolRequestParams::new("resolve_selection_links").with_arguments(
+                json!({"selection_id": point_selection_id})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await?;
+    anyhow::ensure!(unavailable.is_error != Some(true));
+    let unavailable_link = unavailable
+        .structured_content
+        .as_ref()
+        .and_then(|value| value.get("links"))
+        .and_then(Value::as_array)
+        .and_then(|links| links.first())
+        .expect("unavailable point-to-pixel link");
+    anyhow::ensure!(unavailable_link["resolver"] == "world_to_raster_pixel");
+    anyhow::ensure!(unavailable_link["exactness"] == "unavailable");
+    anyhow::ensure!(unavailable_link["status"] == "unavailable");
+    anyhow::ensure!(unavailable_link["result"].is_null());
 
     let shutdown = client.close_with_timeout(Duration::from_secs(15)).await?;
     anyhow::ensure!(shutdown.is_some(), "MCP child did not shut down within 15s");

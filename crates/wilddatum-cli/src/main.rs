@@ -139,6 +139,8 @@ enum Commands {
         #[arg(long, default_value_t = 100_000)]
         point_limit: u64,
     },
+    /// Evaluate applicable EcoViewSpec v2 link rules for a saved selection.
+    ResolveSelectionLinks { selection_id: String },
     /// Render and open a semantic view in Rerun.
     Open {
         view_id: String,
@@ -443,6 +445,9 @@ async fn main() -> Result<()> {
                 .query_selection(&selection_id, dataset_id.as_deref(), point_limit)
                 .await?;
             print_json(&result)?;
+        }
+        Commands::ResolveSelectionLinks { selection_id } => {
+            print_json(&service.resolve_selection_links(&selection_id).await?)?;
         }
         Commands::Open { view_id, native } => {
             if native {
