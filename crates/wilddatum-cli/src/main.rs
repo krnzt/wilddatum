@@ -60,6 +60,14 @@ enum Commands {
         #[arg(required = true, num_args = 1..=8)]
         dataset_ids: Vec<String>,
     },
+    /// Recompute and accept a server-generated suggestion as an EcoViewSpec v2.
+    CreateSuggestedView {
+        suggestion_id: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(required = true, num_args = 1..=8)]
+        dataset_ids: Vec<String>,
+    },
     /// Preview a local tabular dataset.
     Preview {
         dataset_id: String,
@@ -269,6 +277,17 @@ async fn main() -> Result<()> {
         }
         Commands::SuggestViews { dataset_ids } => {
             print_json(&service.suggest_views(&dataset_ids)?)?;
+        }
+        Commands::CreateSuggestedView {
+            suggestion_id,
+            name,
+            dataset_ids,
+        } => {
+            print_json(&service.create_view_from_suggestion(
+                &suggestion_id,
+                &dataset_ids,
+                name,
+            )?)?;
         }
         Commands::Preview { dataset_id, limit } => {
             print_json(&service.preview_dataset(&dataset_id, limit.min(2_000))?)?;

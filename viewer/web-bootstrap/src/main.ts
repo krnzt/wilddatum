@@ -23,9 +23,12 @@ const view = await fetchJson(apiUrl("/api/view"));
 viewName.textContent = String(view.name ?? "Ecological explorer");
 viewDetails.innerHTML = `
   <dt>View</dt><dd>${escapeHtml(String(view.view_id))}</dd>
+  <dt>Spec</dt><dd>EcoViewSpec v${escapeHtml(String(view.version ?? 1))}</dd>
   <dt>Revision</dt><dd>${escapeHtml(String(view.revision))}</dd>
   <dt>Datasets</dt><dd>${escapeHtml(String(view.dataset_ids?.length ?? 0))}</dd>
   <dt>Layers</dt><dd>${escapeHtml(String(view.layers?.length ?? 0))}</dd>
+  <dt>Panels</dt><dd>${escapeHtml(String(view.panels?.length ?? 0))}</dd>
+  <dt>Links</dt><dd>${escapeHtml(String(view.link_rules?.length ?? 0))}</dd>
 `;
 
 const viewer = new WebViewer();

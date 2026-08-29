@@ -230,6 +230,16 @@ pub struct SuggestViewsInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateSuggestedViewInput {
+    /// Opaque ID returned by suggest_views. WildDatum recomputes it before acceptance.
+    pub suggestion_id: String,
+    /// The same one to eight durable dataset handles used to obtain the suggestion.
+    pub dataset_ids: Vec<String>,
+    /// Optional human title. Defaults to the server-generated suggestion title.
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct QueryDatasetInput {
     pub dataset_id: String,
     /// Scientific query. Omit for a backwards-compatible bounded preview.
@@ -868,6 +878,23 @@ impl WildDatumMcp {
     }
 
     #[tool(
+        description = "Recompute and accept a server-generated visualization suggestion as a durable EcoViewSpec v2 with explicit panels and link rules"
+    )]
+    async fn create_view_from_suggestion(
+        &self,
+        Parameters(input): Parameters<CreateSuggestedViewInput>,
+    ) -> CallToolResult {
+        match self.service.create_view_from_suggestion(
+            &input.suggestion_id,
+            &input.dataset_ids,
+            input.name,
+        ) {
+            Ok(view) => bounded_serializable(view),
+            Err(error) => tool_error(error),
+        }
+    }
+
+    #[tool(
         description = "Run a bounded tabular, raster, hyperspectral, point-cloud, or vector query and return a durable result handle"
     )]
     async fn query_dataset(
@@ -1455,6 +1482,7 @@ mod tests {
             "materialize_dataset",
             "inspect_scientific_inventory",
             "suggest_views",
+            "create_view_from_suggestion",
             "query_dataset",
             "inspect_result",
             "export_result",
@@ -1567,6 +1595,46 @@ mod tests {
                 .and_then(|value| value.get("suggestions"))
                 .and_then(Value::as_array)
                 .is_some_and(|suggestions| !suggestions.is_empty())
+        );
+        let suggestion_id = suggestions
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("suggestions"))
+            .and_then(Value::as_array)
+            .and_then(|suggestions| suggestions.first())
+            .and_then(|suggestion| suggestion.get("suggestion_id"))
+            .and_then(Value::as_str)
+            .expect("suggestion ID");
+        let accepted = client
+            .call_tool(
+                CallToolRequestParams::new("create_view_from_suggestion").with_arguments(
+                    json!({
+                        "suggestion_id": suggestion_id,
+                        "dataset_ids": [dataset.dataset_id],
+                        "name": "Accepted scientific view"
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+            )
+            .await?;
+        assert_ne!(accepted.is_error, Some(true));
+        assert_eq!(
+            accepted
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("version"))
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            accepted
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("source_suggestion_id"))
+                .and_then(Value::as_str),
+            Some(suggestion_id)
         );
 
         let query = client

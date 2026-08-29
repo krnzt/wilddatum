@@ -68,6 +68,63 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
                     .any(|candidate| candidate["recipe"] == "point_cloud_spectral_cube_v1")
             })
     );
+    let suggestion_id = suggestion["suggestions"]
+        .as_array()
+        .and_then(|suggestions| {
+            suggestions
+                .iter()
+                .find(|candidate| candidate["recipe"] == "point_cloud_spectral_cube_v1")
+        })
+        .and_then(|candidate| candidate["suggestion_id"].as_str())
+        .expect("multimodal suggestion ID");
+    let accepted_output = Command::new(executable)
+        .env("WILDDATUM_DATA_DIR", &data_dir)
+        .env("WILDDATUM_CACHE_DIR", &cache_dir)
+        .args([
+            "create-suggested-view",
+            suggestion_id,
+            "--name",
+            "Accepted multimodal workspace",
+            point_dataset_id,
+            cube_dataset_id,
+        ])
+        .output()?;
+    anyhow::ensure!(
+        accepted_output.status.success(),
+        "suggestion acceptance failed: {}",
+        String::from_utf8_lossy(&accepted_output.stderr)
+    );
+    let accepted: Value = serde_json::from_slice(&accepted_output.stdout)?;
+    anyhow::ensure!(accepted["version"] == 2);
+    anyhow::ensure!(
+        accepted["panels"]
+            .as_array()
+            .is_some_and(|panels| panels.len() == 3)
+    );
+    anyhow::ensure!(
+        accepted["link_rules"]
+            .as_array()
+            .is_some_and(|links| links.iter().any(|link| {
+                link["resolver"] == "world_to_raster_pixel" && link["exactness"] == "unavailable"
+            }))
+    );
+    let accepted_recording = directory.path().join("accepted-multimodal.rrd");
+    let render_output = Command::new(executable)
+        .env("WILDDATUM_DATA_DIR", &data_dir)
+        .env("WILDDATUM_CACHE_DIR", &cache_dir)
+        .args([
+            "render",
+            accepted["view_id"].as_str().expect("accepted view ID"),
+            "--output",
+            accepted_recording.to_str().expect("recording path"),
+        ])
+        .output()?;
+    anyhow::ensure!(
+        render_output.status.success(),
+        "accepted view render failed: {}",
+        String::from_utf8_lossy(&render_output.stderr)
+    );
+    anyhow::ensure!(accepted_recording.metadata()?.len() > 0);
 
     let transport = TokioChildProcess::new(tokio::process::Command::new(executable).configure(
         |command| {
@@ -87,6 +144,11 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
             .any(|tool| tool.name == "inspect_scientific_inventory")
     );
     anyhow::ensure!(tools.iter().any(|tool| tool.name == "suggest_views"));
+    anyhow::ensure!(
+        tools
+            .iter()
+            .any(|tool| tool.name == "create_view_from_suggestion")
+    );
     let plan_tool = tools
         .iter()
         .find(|tool| tool.name == "plan_materialization")

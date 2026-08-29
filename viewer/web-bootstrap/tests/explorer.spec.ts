@@ -25,6 +25,27 @@ test.beforeAll(async () => {
     timeout: 90_000
   });
   const demo = JSON.parse(stdout);
+  const suggestionOutput = await execute(
+    executable,
+    ["suggest-views", ...demo.dataset_ids],
+    {env: environment, timeout: 30_000}
+  );
+  const suggestion = JSON.parse(suggestionOutput.stdout).suggestions.find(
+    (candidate: any) => candidate.recipe === "point_cloud_spectral_cube_v1"
+  );
+  if (!suggestion) throw new Error("synthetic demo did not produce a multimodal suggestion");
+  const acceptedOutput = await execute(
+    executable,
+    [
+      "create-suggested-view",
+      suggestion.suggestion_id,
+      "--name",
+      "Accepted multimodal workspace",
+      ...demo.dataset_ids
+    ],
+    {env: environment, timeout: 30_000}
+  );
+  const acceptedView = JSON.parse(acceptedOutput.stdout);
   const pointView = await execute(
     executable,
     ["create-view", "--name", "Point selection smoke", demo.dataset_ids[0]],
@@ -37,7 +58,7 @@ test.beforeAll(async () => {
     {env: environment, timeout: 90_000}
   );
   profileViewId = JSON.parse(profileDemo.stdout).view_id;
-  explorerUrl = await startExplorer(demo.view_id);
+  explorerUrl = await startExplorer(acceptedView.view_id);
 });
 
 test.afterAll(async () => {
@@ -48,6 +69,10 @@ test.afterAll(async () => {
 test("renders LiDAR and hyperspectral views and records real Rerun picks", async ({page}) => {
   await page.goto(explorerUrl);
   await loadRenderedExplorer(page);
+  await expect(page.locator("#view-details")).toContainText("EcoViewSpec v2");
+  await expect(page.locator("#view-details")).toContainText("Panels");
+  await expect(page.locator("#view-details")).toContainText("3");
+  await expect(page.locator("#view-details")).toContainText("Links");
 
   const cubeSelection = await clickUntilSelection(
     page,
