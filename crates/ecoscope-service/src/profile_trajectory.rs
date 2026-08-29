@@ -32,9 +32,12 @@ impl EcoScopeService {
             .iter_mut()
             .find(|layer| layer.id == layer_id)
             .ok_or_else(|| EcoScopeError::NotFound(format!("layer {layer_id}")))?;
-        if !matches!(layer.modality, Modality::Tabular | Modality::TimeSeries) {
+        if !matches!(
+            layer.modality,
+            Modality::Tabular | Modality::TimeSeries | Modality::Vector
+        ) {
             return Err(EcoScopeError::Invalid(format!(
-                "layer {layer_id} is not tabular or time-series data"
+                "layer {layer_id} is not tabular, time-series, or trajectory data"
             )));
         }
         if !recipe.value.accepted_qc.is_empty() && recipe.value.qc_field.is_none() {
@@ -338,7 +341,7 @@ mod tests {
                 )
                 .unwrap_err()
                 .to_string()
-                .contains("not tabular or time-series")
+                .contains("not tabular, time-series, or trajectory")
         );
     }
 }

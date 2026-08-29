@@ -104,7 +104,10 @@ impl EcoScopeService {
             }
             SemanticSelection::TimeInterval { start, end, .. } => {
                 let layer = select_layer(view, requested_dataset_id, |layer| {
-                    matches!(layer.modality, Modality::Tabular | Modality::TimeSeries)
+                    matches!(
+                        layer.modality,
+                        Modality::Tabular | Modality::TimeSeries | Modality::Vector
+                    )
                         && layer.encoding.contains_key("time_field")
                 })?;
                 let time_field = layer.encoding["time_field"]
@@ -491,9 +494,11 @@ fn verified_source_row_query(
             layer.dataset_id
         )));
     }
-    if !matches!(layer.modality, Modality::Tabular | Modality::TimeSeries)
-        || layer.encoding.get("view_kind").and_then(Value::as_str)
-            != Some(PROFILE_TRAJECTORY_VIEW_KIND)
+    if !matches!(
+        layer.modality,
+        Modality::Tabular | Modality::TimeSeries | Modality::Vector
+    ) || layer.encoding.get("view_kind").and_then(Value::as_str)
+        != Some(PROFILE_TRAJECTORY_VIEW_KIND)
     {
         return Err(EcoScopeError::Invalid(
             "viewer row mapping requires a validated profile_trajectory_v1 layer".into(),
@@ -735,7 +740,9 @@ mod tests {
             )
             .unwrap();
         }
-        let manifest = service.import_local_file(&path).await.unwrap();
+        let mut manifest = service.import_local_file(&path).await.unwrap();
+        manifest.modalities = vec![Modality::Vector, Modality::Tabular];
+        service.save_manifest(&manifest).unwrap();
         let view = service
             .create_view("Profile".into(), vec![manifest.dataset_id.clone()])
             .unwrap();

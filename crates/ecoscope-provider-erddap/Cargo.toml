@@ -20,4 +20,7 @@ url.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+csv.workspace = true
+ecoscope-rerun = { path = "../ecoscope-rerun" }
+ecoscope-service = { path = "../ecoscope-service" }
 tempfile.workspace = true

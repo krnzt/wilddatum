@@ -10,6 +10,7 @@ use url::{Host, Url};
 use crate::table::{InfoMetadata, SearchRecord, parse_info, parse_search};
 
 pub const DEFAULT_METADATA_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+pub const DEFAULT_DOWNLOAD_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct DownloadMetadata {
@@ -31,6 +32,7 @@ pub struct ErddapClient {
     client: Client,
     base_url: Url,
     metadata_limit_bytes: usize,
+    download_limit_bytes: u64,
 }
 
 impl ErddapClient {
@@ -47,11 +49,17 @@ impl ErddapClient {
             client,
             base_url,
             metadata_limit_bytes: DEFAULT_METADATA_LIMIT_BYTES,
+            download_limit_bytes: DEFAULT_DOWNLOAD_LIMIT_BYTES,
         })
     }
 
     pub fn with_metadata_limit_bytes(mut self, limit: usize) -> Self {
         self.metadata_limit_bytes = limit;
+        self
+    }
+
+    pub fn with_download_limit_bytes(mut self, limit: u64) -> Self {
+        self.download_limit_bytes = limit;
         self
     }
 
@@ -191,6 +199,15 @@ impl ErddapClient {
         let response = successful_response.ok_or_else(|| {
             EcoScopeError::Conflict("ERDDAP download did not reach an approved endpoint".into())
         })?;
+        if response
+            .content_length()
+            .is_some_and(|size| size > self.download_limit_bytes)
+        {
+            return Err(EcoScopeError::Invalid(format!(
+                "ERDDAP download exceeds the {} byte limit",
+                self.download_limit_bytes
+            )));
+        }
         let metadata = DownloadMetadata {
             etag: header_string(response.headers(), reqwest::header::ETAG),
             last_modified: header_string(response.headers(), reqwest::header::LAST_MODIFIED),
@@ -209,11 +226,17 @@ impl ErddapClient {
                 let chunk = chunk.map_err(|error| {
                     EcoScopeError::Internal(format!("ERDDAP download failed: {error}"))
                 })?;
-                output.write_all(&chunk).await?;
-                hasher.update(&chunk);
                 size_bytes = size_bytes.checked_add(chunk.len() as u64).ok_or_else(|| {
                     EcoScopeError::Invalid("ERDDAP download size overflow".into())
                 })?;
+                if size_bytes > self.download_limit_bytes {
+                    return Err(EcoScopeError::Invalid(format!(
+                        "ERDDAP download exceeds the {} byte limit",
+                        self.download_limit_bytes
+                    )));
+                }
+                output.write_all(&chunk).await?;
+                hasher.update(&chunk);
             }
             output.flush().await?;
             output.sync_all().await?;

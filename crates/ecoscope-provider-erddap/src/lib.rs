@@ -59,6 +59,11 @@ impl ErddapProvider {
         self
     }
 
+    pub fn with_download_limit_bytes(mut self, limit: u64) -> Self {
+        self.client = self.client.with_download_limit_bytes(limit);
+        self
+    }
+
     pub fn with_object_dir(mut self, object_dir: impl Into<PathBuf>) -> Self {
         self.object_dir = Some(object_dir.into());
         self
@@ -133,22 +138,9 @@ impl ErddapProvider {
                 .provider_extensions
                 .insert(name.clone(), value.clone());
         }
-        let variables = info
-            .variables
-            .iter()
-            .map(|(name, variable)| {
-                (
-                    name.clone(),
-                    json!({
-                        "data_type": variable.data_type,
-                        "attributes": variable.attributes,
-                    }),
-                )
-            })
-            .collect::<serde_json::Map<_, _>>();
         resource
             .provider_extensions
-            .insert("variables".into(), Value::Object(variables));
+            .insert("variables".into(), variables_metadata(&info));
         resource.provider_extensions.insert(
             "info_url".into(),
             Value::String(self.client.info_url(&resource.resource_id)?.to_string()),
@@ -311,6 +303,7 @@ impl ErddapProvider {
                 globals.get("cdm_data_type").cloned().unwrap_or(Value::Null),
             ),
             ("global_attributes".into(), json!(globals)),
+            ("variables".into(), variables_metadata(&info)),
             ("info_url".into(), json!(info_url)),
             (
                 "response_etag".into(),
@@ -634,6 +627,23 @@ fn modalities(cdm_data_type: &str) -> Vec<Modality> {
         "point" => vec![Modality::Vector, Modality::Tabular],
         _ => vec![Modality::Tabular],
     }
+}
+
+fn variables_metadata(info: &InfoMetadata) -> Value {
+    Value::Object(
+        info.variables
+            .iter()
+            .map(|(name, variable)| {
+                (
+                    name.clone(),
+                    json!({
+                        "data_type": variable.data_type,
+                        "attributes": variable.attributes,
+                    }),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn insert_optional(target: &mut BTreeMap<String, Value>, key: &str, value: Option<String>) {

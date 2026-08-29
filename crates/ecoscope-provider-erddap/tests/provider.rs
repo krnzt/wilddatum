@@ -290,6 +290,29 @@ async fn materialize_streams_an_approved_subset_into_an_immutable_object() {
     assert_eq!(manifest.transformations[0].version, "2.28");
     assert_eq!(manifest.license.as_ref().unwrap().name, "CC BY 4.0");
     assert_eq!(manifest.provider_metadata["response_etag"], "fixture-etag");
+    assert_eq!(
+        manifest.provider_metadata["variables"]["platform_number"]["attributes"]["cf_role"],
+        "trajectory_id"
+    );
+    assert_eq!(
+        manifest.provider_metadata["variables"]["temp"]["attributes"]["ancillary_variables"],
+        "temp_qc"
+    );
+}
+
+#[tokio::test]
+async fn materialize_enforces_download_limit_and_cleans_partial_files() {
+    let objects = tempfile::tempdir().unwrap();
+    let provider = ErddapProvider::new(fixture_server().await)
+        .unwrap()
+        .with_object_dir(objects.path())
+        .with_download_limit_bytes(32);
+    let plan = approved_plan(&provider).await;
+
+    let error = provider.materialize(plan, None).await.unwrap_err();
+
+    assert!(error.to_string().contains("32 byte limit"));
+    assert_eq!(std::fs::read_dir(objects.path()).unwrap().count(), 0);
 }
 
 #[test]
