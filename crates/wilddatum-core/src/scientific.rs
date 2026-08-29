@@ -95,6 +95,8 @@ pub struct ScientificComponent {
     #[serde(default)]
     pub relationships: BTreeMap<String, String>,
     #[serde(default)]
+    pub metadata: BTreeMap<String, Value>,
+    #[serde(default)]
     pub evidence: Vec<SemanticEvidence>,
 }
 
@@ -224,6 +226,7 @@ mod tests {
                 unit: None,
                 coordinate_summary: None,
                 relationships: BTreeMap::new(),
+                metadata: BTreeMap::new(),
                 evidence: vec![SemanticEvidence {
                     source: "file_metadata".into(),
                     pointer: Some("/SITE/Reflectance".into()),

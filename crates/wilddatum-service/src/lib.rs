@@ -4,6 +4,7 @@ mod cube;
 mod point_cloud;
 mod profile_trajectory;
 mod query;
+mod scientific;
 mod selection;
 
 use std::{
