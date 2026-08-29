@@ -116,6 +116,12 @@ wavelength-aware spectrum. The derived pixel, both link decisions, and the
 spectrum result remain inspectable through the normal MCP, CLI, and browser
 interfaces.
 
+After resolution, the browser regenerates the authoritative view as a complete
+Rerun recording with a magenta source/derived pixel marker and the linked
+wavelength/value series inside its spectrum panel. The structured selection and
+result provenance still drive the overlay; the browser does not reconstruct it
+from canvas coordinates.
+
 Detailed support and caveats are in the [format matrix](docs/FORMATS.md). Design
 boundaries are documented in [architecture](docs/ARCHITECTURE.md) and
 [implementation decisions](docs/DECISIONS.md). Planned Research Infrastructure,

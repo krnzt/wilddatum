@@ -53,7 +53,7 @@ Alpha.3 deepens the human-agent visualization loop before adding another RI.
   the normal MCP and CLI, then render its supported layers through Rerun.
 - [x] Evaluate exact cube-pixel → spectrum rules into durable provenance-linked
   results through MCP, CLI, and the browser; unavailable rules never execute.
-- [ ] Highlight derived selections and result series inside Rerun panels while
+- [x] Highlight derived selections and result series inside Rerun panels while
   preserving exactness and provenance in the browser explorer.
 - [x] Extract LAS WKT/GeoKey CRS plus NEON HDF5 EPSG, map/affine, extent,
   scale, and no-data metadata; execute point-return → image-pixel → spectrum

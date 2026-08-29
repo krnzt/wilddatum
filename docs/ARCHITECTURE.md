@@ -109,6 +109,13 @@ The TypeScript browser package only boots the Rerun Wasm viewer and translates
 viewer positions through mappings already stored in `EcoViewSpec`. It does not
 invent scientific schemas, transforms, queries, or provenance.
 
+When a link resolves, Rust regenerates the complete RRD with source and derived
+selection markers plus bounded linked-result series under the target panel's
+entity tree. The loopback server publishes the completed file atomically, and
+the TypeScript shell reconnects the viewer with a cache-busted recording URL.
+The overlay is a rendering of `SelectionLinkResolution`, not a second source of
+scientific state.
+
 Rerun remains the rendering and interaction engine; WildDatum does not fork it
 or build a replacement canvas. Native Rerun and the Rerun Web Viewer consume the
 same bounded RRD. WildDatum adds a side panel and loopback API so viewer events
