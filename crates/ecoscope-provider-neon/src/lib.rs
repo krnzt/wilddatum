@@ -11,7 +11,7 @@ use ecoscope_core::{
     PlannedFile, ProviderCapability, ProviderKind, ProviderManifest, ProviderStatus, ResourceKind,
     ResourceRecord, Result, SourceFile,
 };
-use ecoscope_provider_api::EcologicalDataProvider;
+use ecoscope_provider_api::{EcologicalDataProvider, PROVIDER_PROTOCOL_VERSION};
 use futures::StreamExt;
 use reqwest::{Client, StatusCode};
 use serde::Serialize;
@@ -460,7 +460,7 @@ impl EcologicalDataProvider for NeonProvider {
 
     fn manifest(&self) -> ProviderManifest {
         ProviderManifest {
-            schema_version: 1,
+            schema_version: PROVIDER_PROTOCOL_VERSION,
             provider_id: "neon".into(),
             name: "NSF National Ecological Observatory Network".into(),
             version: env!("CARGO_PKG_VERSION").into(),

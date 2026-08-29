@@ -8,7 +8,7 @@ use ecoscope_core::{
     ExportRequest, JobStatus, MAX_MCP_RESULT_BYTES, ProviderCapability, ProviderKind,
     ProviderManifest, ProviderStatus, ResourceQuery, ResultId, SemanticSelection,
 };
-use ecoscope_provider_api::{EcologicalDataProvider, validate_manifest};
+use ecoscope_provider_api::{EcologicalDataProvider, PROVIDER_PROTOCOL_VERSION, validate_manifest};
 use ecoscope_provider_neon::NeonProvider;
 use ecoscope_provider_process::{ProcessProvider, discover_configs, find_config};
 use ecoscope_service::EcoScopeService;
@@ -327,7 +327,7 @@ impl EcoScopeMcp {
             Err(error) => return tool_error(error),
         };
         let local = ProviderManifest {
-            schema_version: 1,
+            schema_version: PROVIDER_PROTOCOL_VERSION,
             provider_id: "local".into(),
             name: "Local scientific files".into(),
             version: env!("CARGO_PKG_VERSION").into(),
@@ -1381,6 +1381,21 @@ mod tests {
                 .and_then(|value| value.get("mcp_spec"))
                 .and_then(serde_json::Value::as_str),
             Some("2026-07-28")
+        );
+
+        let providers = client
+            .call_tool(CallToolRequestParams::new("list_providers"))
+            .await?;
+        assert_ne!(providers.is_error, Some(true));
+        assert!(
+            providers
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("providers"))
+                .and_then(Value::as_array)
+                .is_some_and(|providers| providers.iter().all(|provider| {
+                    provider.get("schema_version").and_then(Value::as_u64) == Some(2)
+                }))
         );
 
         let query = client

@@ -1009,6 +1009,46 @@ mod tests {
         assert_eq!(service.list_manifests().unwrap().len(), 1);
     }
 
+    #[test]
+    fn reads_alpha_manifest_json_from_the_state_database() {
+        let (_directory, service) = service();
+        let legacy = json!({
+            "dataset_id": "ds_legacy",
+            "provider": "local",
+            "product_code": "observations.csv",
+            "product_revision": "blake3-alpha",
+            "modalities": ["tabular"],
+            "sites": [],
+            "start_month": null,
+            "end_month": null,
+            "release": null,
+            "package": null,
+            "include_provisional": false,
+            "source_files": [],
+            "transformations": [],
+            "format": null,
+            "spatial_reference": null,
+            "cube": null,
+            "cubes": [],
+            "license": null,
+            "citation": null,
+            "created_at": "2026-01-01T00:00:00Z"
+        });
+        service
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO datasets(id, json, created_at) VALUES(?1, ?2, ?3)",
+                params!["ds_legacy", legacy.to_string(), "2026-01-01T00:00:00Z"],
+            )
+            .unwrap();
+
+        let manifest = service.get_manifest("ds_legacy").unwrap();
+        assert_eq!(manifest.resource_id, "observations.csv");
+        assert!(manifest.locations.is_empty());
+        assert!(manifest.provider_metadata.is_empty());
+    }
+
     #[tokio::test]
     async fn previews_provider_objects_through_the_manifest_namespace() {
         let (directory, service) = service();
