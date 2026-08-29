@@ -9,7 +9,8 @@ Context Protocol server. It lets Codex, Claude, and other MCP agents discover,
 materialize, query, visualize, select, and cite scientific data without putting
 credentials, private paths, or millions of rows into model context.
 
-NEON is the first built-in remote provider. Local tabular, raster, vector,
+NEON plus public ERDDAP services from EMSO ERIC, ICOS Carbon Portal, and
+Euro-Argo/Ifremer are built-in remote providers. Local tabular, raster, vector,
 point-cloud, image, hyperspectral, and N-dimensional array sources use the same
 provider-independent manifest, query, view, selection, and provenance model.
 
@@ -50,6 +51,9 @@ row; for a mapped cube, an image click maps back to the complete source spectrum
 - A normal MCP 2026-07-28 stdio server registerable with Codex and Claude Code.
 - Public NEON catalog discovery plus reproducible plan, approval, background
   materialization, checksum, release, license, and citation handling.
+- Public EMSO, ICOS ERDDAP, and Euro-Argo catalog discovery plus validated
+  tabledap/griddap subsets, redirect-aware approval, streaming materialization,
+  license, citation, and live-source provenance.
 - Out-of-band local imports with streaming fingerprints and opaque agent-facing
   dataset IDs.
 - Arrow/DataFusion tabular queries, spatial raster/vector queries, indexed COPC
@@ -165,6 +169,68 @@ The prompt does not echo the token. EcoScope stores it in the operating-system
 keychain and sends it upstream only in the `X-API-Token` header. Headless systems
 can inject `NEON_API_TOKEN` through their secret manager.
 
+## Public ERDDAP infrastructures
+
+The normal registered MCP exposes three credential-free public presets through
+the same tools used for NEON and community providers:
+
+| Provider ID | Public surface | Boundary |
+|---|---|---|
+| `emso` | [EMSO ERIC ERDDAP](https://erddap.emso.eu/erddap/) | Federated public datasets; approved redirect chains identify the regional server that returns the bytes |
+| `icos-erddap` | [ICOS Carbon Portal ERDDAP](https://erddap.icos-cp.eu/erddap/) | Public ERDDAP only; authenticated Carbon Portal objects are a separate future integration |
+| `euro-argo` | [Ifremer ERDDAP](https://erddap.ifremer.fr/erddap/) | Catalog search is scoped to Argo/Euro-Argo data on the shared service |
+
+An agent can call `search_catalog` and `inspect_resource` without credentials,
+then construct a typed table subset:
+
+```json
+{
+  "provider": "emso",
+  "resource_id": "OBSEA_seabed_station_TS_L1c",
+  "variables": ["time", "TEMP", "TEMP_QC"],
+  "temporal_start": "2025-01-01T00:00:00Z",
+  "temporal_end": "2025-01-02T00:00:00Z",
+  "provider_options": {
+    "protocol": "tabledap",
+    "output_format": "csv",
+    "constraints": [
+      {"variable": "TEMP_QC", "op": "eq", "value": 1}
+    ]
+  }
+}
+```
+
+That is the input to `plan_materialization`; planning does not download the
+dataset. EcoScope validates every variable against ERDDAP `info` metadata,
+translates neutral temporal bounds into `time` constraints for tabledap, probes
+the exact redirect chain, and returns one URL for approval. Call `approve_plan`
+with the returned hash and then `materialize_dataset`. The stored object is named
+by its BLAKE3 digest, while the manifest retains the decoded query, redirect
+chain, ETag, Last-Modified value, access time, server version, global attributes,
+license, and citation.
+
+Grid subsets use `protocol: "griddap"` and explicit arrays. Each axis can use
+integer indices or ERDDAP value coordinates:
+
+```json
+{
+  "protocol": "griddap",
+  "output_format": "netcdf",
+  "arrays": [{
+    "variable": "temperature",
+    "slices": [
+      {"start": "0", "stop": "23", "stride": 1},
+      {"start": "10", "stop": "30", "stride": 2}
+    ]
+  }]
+}
+```
+
+ERDDAP subsets are live generated results rather than fixed releases. File size
+is generally unknown at approval time, so constrain variables, rows, time, and
+grid axes carefully. Materialization freezes the exact returned bytes locally;
+repeating the same upstream query later may produce a different checksum.
+
 ## Multidimensional data
 
 EcoScope inventories cube arrays without guessing ambiguous scientific meaning.
@@ -184,7 +250,8 @@ The provider-neutral MCP equivalent is `configure_cube_view`.
 
 ## Community providers
 
-NEON is built in, but the architecture is not NEON-shaped. Install a trusted
+The maintained remote providers are built in, but the architecture is not
+institution-shaped. Install a trusted
 language-neutral provider executable with:
 
 ```bash
@@ -217,6 +284,9 @@ MCP input across providers.
   into Rerun yet; GeoPackage currently has inspection but no query adapter.
 - EcoScope-derived COPC indexes provide full-resolution spatial access but do
   not yet contain a provider-quality multiresolution hierarchy.
+- Generic ERDDAP planning does not infer institution-specific station/location
+  dimensions or translate arbitrary polygons. Use typed tabledap constraints or
+  griddap slices; dedicated linked trajectory/profile views remain roadmap work.
 - The pure-Rust NetCDF-3 adapter bounds whole-variable decoding because its
   reader does not currently provide subset I/O.
 
@@ -256,6 +326,13 @@ curl -fL -o /tmp/neon-hyperspectral.h5 https://ndownloader.figshare.com/files/21
 NEON_POINT_CLOUD_FIXTURE=/tmp/neon-point-cloud.las \
 NEON_HYPERSPECTRAL_FIXTURE=/tmp/neon-hyperspectral.h5 \
 cargo test -p ecoscope-rerun --test official_neon_fixtures -- --ignored
+```
+
+The maintained ERDDAP presets also have opt-in live drift checks. They search
+and inspect all three services and materialize a tiny redirected EMSO subset:
+
+```bash
+cargo test -p ecoscope-provider-erddap --test live -- --ignored
 ```
 
 Build local MCPB and archive artifacts after the Rust and browser builds with

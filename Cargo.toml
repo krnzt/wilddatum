@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/ecoscope-core",
   "crates/ecoscope-provider-api",
+  "crates/ecoscope-provider-erddap",
   "crates/ecoscope-provider-neon",
   "crates/ecoscope-provider-process",
   "crates/ecoscope-local-import",

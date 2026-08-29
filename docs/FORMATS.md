@@ -23,6 +23,8 @@ semantics are ambiguous.
 | HDF5/NetCDF-4 | hierarchy + arrays | bounded N-D hyperslab | mapped band/RGB | Arbitrary rank is queryable; rendering currently expects one mapped rank-3 image cube |
 | NetCDF-3 | variables + dimensions | bounded N-D slice | mapped band/RGB | Pure-Rust reader currently decodes the whole source variable and rejects variables over the safety budget |
 | Zarr v2/v3 directory | hierarchy + arrays | bounded N-D slice | mapped band/RGB | Chunk-aware bounding reads; symbolic links are rejected during fingerprinting |
+| ERDDAP tabledap CSV | remote metadata + approved subset | yes after materialization | tabular/time-series | Requested variables and six comparison operators are validated; generated subsets have no reliable byte estimate |
+| ERDDAP tabledap/griddap NetCDF | remote metadata + approved subset | bounded N-D slice after materialization | mapped band/RGB where axes are configured | Index/value axis slices are validated; upstream is live and the local BLAKE3 object is the reproducible byte identity |
 
 All query responses are bounded and persisted as opaque results. Large data are
 not serialized into an MCP response. CSV, Parquet, and RO-Crate exports preserve
@@ -82,3 +84,28 @@ from ordered relative paths and file contents. Raw sources remain immutable;
 derived COPC/COG assets record their source fingerprint and transformation.
 Local absolute paths stay in the private SQLite registry and are never returned
 through MCP or the browser API.
+
+## ERDDAP subsets and modalities
+
+ERDDAP is a remote access protocol, not a new local container format. EcoScope
+materializes an approved tabledap or griddap expression as CSV or NetCDF and
+then uses the same query and Rerun adapters listed above. The source filename in
+the manifest preserves `.csv` or `.nc` even though the immutable object-store
+name is its extensionless BLAKE3 digest.
+
+ERDDAP `cdm_data_type` metadata supplies conservative modality hints:
+
+| `cdm_data_type` | EcoScope modalities |
+|---|---|
+| `Grid` | raster, tensor |
+| `Trajectory`, `Profile`, `TrajectoryProfile`, `TimeSeriesProfile` | vector, time-series, tabular |
+| `TimeSeries` | time-series, tabular |
+| `Point` | vector, tabular |
+| other/unknown | tabular |
+
+These hints do not invent a visualization grammar. Grid NetCDF uses explicit
+cube/axis configuration when metadata is ambiguous. Trajectory and profile CSV
+can be queried immediately, while dedicated linked map/profile layouts and
+QC-aware defaults remain roadmap work. Native variables, units, QC columns,
+global attributes, license, and citation stay available in the manifest rather
+than being flattened into the rendered scene.

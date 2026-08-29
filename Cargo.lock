@@ -2360,6 +2360,7 @@ dependencies = [
  "chrono",
  "ecoscope-core",
  "ecoscope-provider-api",
+ "ecoscope-provider-erddap",
  "ecoscope-provider-neon",
  "ecoscope-provider-process",
  "ecoscope-rerun",
@@ -2381,6 +2382,25 @@ dependencies = [
  "async-trait",
  "ecoscope-core",
  "serde_json",
+]
+
+[[package]]
+name = "ecoscope-provider-erddap"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "blake3",
+ "chrono",
+ "ecoscope-core",
+ "ecoscope-provider-api",
+ "futures",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
 ]
 
 [[package]]

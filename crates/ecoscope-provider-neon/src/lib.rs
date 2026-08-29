@@ -613,6 +613,17 @@ impl EcologicalDataProvider for NeonProvider {
         self.materialize_with_control(plan, credentials, || false, |_, _| {})
             .await
     }
+
+    async fn materialize_controlled(
+        &self,
+        plan: DatasetPlan,
+        credentials: Option<CredentialRef>,
+        should_cancel: &(dyn Fn() -> bool + Send + Sync),
+        on_progress: &(dyn Fn(usize, usize) + Send + Sync),
+    ) -> Result<DatasetManifest> {
+        self.materialize_with_control(plan, credentials, should_cancel, on_progress)
+            .await
+    }
 }
 
 fn infer_modalities(text: &str) -> Vec<Modality> {

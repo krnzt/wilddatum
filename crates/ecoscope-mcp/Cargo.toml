@@ -10,6 +10,7 @@ anyhow.workspace = true
 chrono.workspace = true
 ecoscope-core = { path = "../ecoscope-core" }
 ecoscope-provider-api = { path = "../ecoscope-provider-api" }
+ecoscope-provider-erddap = { path = "../ecoscope-provider-erddap" }
 ecoscope-provider-neon = { path = "../ecoscope-provider-neon" }
 ecoscope-provider-process = { path = "../ecoscope-provider-process" }
 ecoscope-rerun = { path = "../ecoscope-rerun" }

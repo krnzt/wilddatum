@@ -1,0 +1,23 @@
+[package]
+name = "ecoscope-provider-erddap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+blake3.workspace = true
+chrono.workspace = true
+ecoscope-core = { path = "../ecoscope-core" }
+ecoscope-provider-api = { path = "../ecoscope-provider-api" }
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+tempfile.workspace = true

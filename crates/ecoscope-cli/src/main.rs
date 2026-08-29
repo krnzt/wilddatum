@@ -171,7 +171,7 @@ enum ProviderCommands {
         #[arg(long)]
         force: bool,
     },
-    /// Negotiate and list all installed provider manifests.
+    /// List built-in manifests and negotiate installed provider manifests.
     List,
 }
 
@@ -416,6 +416,15 @@ async fn manage_provider(service: &EcoScopeService, command: ProviderCommands) -
                 .canonicalize()
                 .with_context(|| format!("cannot open {}", config.display()))?;
             let parsed = ProcessProviderConfig::from_file(&source)?;
+            if ecoscope_mcp::built_in_provider_manifests()?
+                .iter()
+                .any(|provider| provider.provider_id == parsed.expected_provider_id)
+            {
+                bail!(
+                    "provider ID {} is reserved by a built-in provider",
+                    parsed.expected_provider_id
+                );
+            }
             let provider = ProcessProvider::spawn(parsed.clone())
                 .await
                 .context("provider handshake failed")?;
@@ -441,10 +450,20 @@ async fn manage_provider(service: &EcoScopeService, command: ProviderCommands) -
             }))?;
         }
         ProviderCommands::List => {
-            let mut providers = Vec::new();
+            let mut providers = ecoscope_mcp::built_in_provider_manifests()?;
             let mut unavailable = Vec::new();
             for config in discover_configs(&service.paths().providers_dir)? {
                 let provider_id = config.expected_provider_id.clone();
+                if providers
+                    .iter()
+                    .any(|provider| provider.provider_id == provider_id)
+                {
+                    unavailable.push(serde_json::json!({
+                        "provider_id": provider_id,
+                        "error": "provider ID is reserved by a built-in provider"
+                    }));
+                    continue;
+                }
                 match ProcessProvider::spawn(config).await {
                     Ok(provider) => providers.push(provider.manifest()),
                     Err(error) => unavailable.push(serde_json::json!({
