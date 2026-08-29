@@ -947,6 +947,11 @@ fn spectral_cube_suggestion(
         ("x_axis".into(), json!(x_axis.index)),
         ("spectral_axis".into(), json!(spectral_axis.index)),
     ]);
+    for key in ["scale_factor", "add_offset", "no_data", "bad_bands"] {
+        if let Some(value) = component.metadata.get(key) {
+            rgb_encoding.insert(key.into(), value.clone());
+        }
+    }
     let mut unresolved = inventory.unresolved_decisions.clone();
     let confidence = if let Some([red, green, blue]) = bands {
         rgb_encoding.insert("red_band".into(), json!(red));

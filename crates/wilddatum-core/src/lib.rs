@@ -555,6 +555,44 @@ pub struct ViewLinkRule {
     pub explanation: String,
 }
 
+pub const LINK_RESOLUTION_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkResolutionStatus {
+    Resolved,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LinkedResultSummary {
+    pub result_id: ResultId,
+    pub dataset_id: DatasetId,
+    pub row_count: Option<u64>,
+    pub preview: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ResolvedViewLink {
+    pub source_panel: String,
+    pub target_panel: String,
+    pub resolver: String,
+    pub exactness: LinkExactness,
+    pub status: LinkResolutionStatus,
+    pub explanation: String,
+    pub result: Option<LinkedResultSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SelectionLinkResolution {
+    pub version: u32,
+    pub selection_id: SelectionId,
+    pub view_id: ViewId,
+    pub view_revision: u64,
+    #[serde(default)]
+    pub links: Vec<ResolvedViewLink>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewLayout {

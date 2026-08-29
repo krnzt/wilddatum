@@ -4,9 +4,11 @@ use chrono::Utc;
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use wilddatum_core::{
-    DatasetManifest, DatasetQuery, EcoLayer, EcoViewSpec, GeoGeometry, Modality,
-    PINNED_RERUN_VERSION, PROFILE_TRAJECTORY_VIEW_KIND, QueryFilter, Result, ResultRecord,
-    SelectionRecord, SemanticSelection, Transformation, WildDatumError,
+    DatasetManifest, DatasetQuery, EcoLayer, EcoViewSpec, GeoGeometry, LINK_RESOLUTION_VERSION,
+    LinkExactness, LinkResolutionStatus, LinkedResultSummary, Modality, PINNED_RERUN_VERSION,
+    PROFILE_TRAJECTORY_VIEW_KIND, QueryFilter, ResolvedViewLink, Result, ResultRecord,
+    SelectionLinkResolution, SelectionRecord, SemanticSelection, Transformation, ViewLinkRule,
+    WildDatumError,
 };
 
 use super::WildDatumService;
@@ -47,6 +49,187 @@ impl WildDatumService {
                 "selection_id": selection.selection_id,
                 "view_id": selection.view_id,
                 "view_revision": selection.revision
+            }),
+            created_at: Utc::now(),
+        });
+        self.put_json(
+            "results",
+            &result.result_id.0,
+            &result,
+            result.created_at.to_rfc3339(),
+        )?;
+        Ok(result)
+    }
+
+    /// Evaluate the server-authored v2 link rules applicable to one durable
+    /// selection. Unavailable links are reported structurally and never run.
+    pub async fn resolve_selection_links(
+        &self,
+        selection_id: &str,
+    ) -> Result<SelectionLinkResolution> {
+        let selection = self.get_selection(selection_id)?;
+        let view = self.get_view(&selection.view_id.0)?;
+        if view.revision != selection.revision {
+            return Err(WildDatumError::Conflict(format!(
+                "selection {} belongs to view revision {}, but the current view revision is {}",
+                selection.selection_id.0, selection.revision, view.revision
+            )));
+        }
+        let (source_selection, source_dataset) = selection_link_source(&selection.selection);
+        let mut links = Vec::new();
+        for rule in &view.link_rules {
+            if rule.source_selection != source_selection
+                || !link_source_matches(&view, rule, source_dataset)?
+            {
+                continue;
+            }
+            if rule.exactness == LinkExactness::Unavailable {
+                links.push(ResolvedViewLink {
+                    source_panel: rule.source_panel.clone(),
+                    target_panel: rule.target_panel.clone(),
+                    resolver: rule.resolver.clone(),
+                    exactness: rule.exactness.clone(),
+                    status: LinkResolutionStatus::Unavailable,
+                    explanation: rule.explanation.clone(),
+                    result: None,
+                });
+                continue;
+            }
+            if rule.resolver != "cube_pixel_to_spectrum" || rule.exactness != LinkExactness::Exact {
+                return Err(WildDatumError::Invalid(format!(
+                    "link resolver {} with exactness {:?} is not executable",
+                    rule.resolver, rule.exactness
+                )));
+            }
+            let result = self
+                .resolve_cube_pixel_spectrum(&view, &selection, rule)
+                .await?;
+            links.push(ResolvedViewLink {
+                source_panel: rule.source_panel.clone(),
+                target_panel: rule.target_panel.clone(),
+                resolver: rule.resolver.clone(),
+                exactness: rule.exactness.clone(),
+                status: LinkResolutionStatus::Resolved,
+                explanation: rule.explanation.clone(),
+                result: Some(LinkedResultSummary {
+                    result_id: result.result_id,
+                    dataset_id: result.dataset_id,
+                    row_count: result.row_count,
+                    preview: result.preview,
+                }),
+            });
+        }
+        Ok(SelectionLinkResolution {
+            version: LINK_RESOLUTION_VERSION,
+            selection_id: selection.selection_id,
+            view_id: selection.view_id,
+            view_revision: selection.revision,
+            links,
+        })
+    }
+
+    async fn resolve_cube_pixel_spectrum(
+        &self,
+        view: &EcoViewSpec,
+        selection: &SelectionRecord,
+        rule: &ViewLinkRule,
+    ) -> Result<ResultRecord> {
+        let SemanticSelection::CubePixel {
+            dataset_id,
+            array_path,
+            x,
+            y,
+            x_axis,
+            y_axis,
+            spectral_axis,
+            ..
+        } = &selection.selection
+        else {
+            return Err(WildDatumError::Invalid(
+                "cube_pixel_to_spectrum requires a cube-pixel selection".into(),
+            ));
+        };
+        // Reuse the authoritative selection validator before choosing the
+        // wavelength-aware common-case query below.
+        let (_, fallback_query) = self.selection_to_query(view, selection, None, 100_000)?;
+        let source_panel = view
+            .panels
+            .iter()
+            .find(|panel| panel.id == rule.source_panel)
+            .ok_or_else(|| WildDatumError::NotFound(format!("panel {}", rule.source_panel)))?;
+        let target_panel = view
+            .panels
+            .iter()
+            .find(|panel| panel.id == rule.target_panel)
+            .ok_or_else(|| WildDatumError::NotFound(format!("panel {}", rule.target_panel)))?;
+        if source_panel.layer_id != target_panel.layer_id {
+            return Err(WildDatumError::Invalid(
+                "cube pixel and spectrum panels must reference the same validated cube layer"
+                    .into(),
+            ));
+        }
+        if source_panel
+            .encoding
+            .get("cube_array")
+            .and_then(Value::as_str)
+            != Some(array_path)
+        {
+            return Err(WildDatumError::Invalid(
+                "cube selection array does not match the accepted source panel".into(),
+            ));
+        }
+
+        let query = if (*y_axis, *x_axis, *spectral_axis) == (0, 1, 2) {
+            DatasetQuery::Spectrum {
+                x: *x,
+                y: *y,
+                dataset_path: Some(array_path.clone()),
+                wavelength_dataset: source_panel
+                    .encoding
+                    .get("wavelength_dataset")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                spectral_axis: *spectral_axis,
+                wavelength_start_nm: None,
+                wavelength_end_nm: None,
+                scale_factor: source_panel
+                    .encoding
+                    .get("scale_factor")
+                    .and_then(Value::as_f64),
+                add_offset: source_panel
+                    .encoding
+                    .get("add_offset")
+                    .and_then(Value::as_f64),
+                no_data: source_panel.encoding.get("no_data").and_then(Value::as_f64),
+                bad_bands: source_panel
+                    .encoding
+                    .get("bad_bands")
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(Value::as_u64)
+                            .filter_map(|value| u32::try_from(value).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }
+        } else {
+            fallback_query
+        };
+        let mut result = self.query_dataset(&dataset_id.0, query).await?;
+        result.source_selection = Some(selection.selection_id.clone());
+        result.transformations.push(Transformation {
+            name: "view_link_resolution".into(),
+            version: LINK_RESOLUTION_VERSION.to_string(),
+            parameters: json!({
+                "view_id": selection.view_id,
+                "view_revision": selection.revision,
+                "selection_id": selection.selection_id,
+                "source_panel": rule.source_panel,
+                "target_panel": rule.target_panel,
+                "resolver": rule.resolver,
+                "exactness": rule.exactness,
             }),
             created_at: Utc::now(),
         });
@@ -405,6 +588,41 @@ impl WildDatumService {
             )),
         }
     }
+}
+
+fn selection_link_source(selection: &SemanticSelection) -> (&'static str, Option<&str>) {
+    match selection {
+        SemanticSelection::CubePixel { dataset_id, .. } => {
+            ("cube_pixel", Some(dataset_id.0.as_str()))
+        }
+        SemanticSelection::PointSet { dataset_id, .. } => {
+            ("world_point", Some(dataset_id.0.as_str()))
+        }
+        SemanticSelection::Rows { dataset_id, .. } => ("rows", Some(dataset_id.0.as_str())),
+        SemanticSelection::TimeInterval { .. } => ("time_interval", None),
+        SemanticSelection::MapRegion { .. } => ("map_region", None),
+        SemanticSelection::RasterRegion { .. } => ("raster_region", None),
+        SemanticSelection::SpectralRange { .. } => ("spectral_range", None),
+        SemanticSelection::Entities { .. } => ("entities", None),
+    }
+}
+
+fn link_source_matches(
+    view: &EcoViewSpec,
+    rule: &ViewLinkRule,
+    source_dataset: Option<&str>,
+) -> Result<bool> {
+    let panel = view
+        .panels
+        .iter()
+        .find(|panel| panel.id == rule.source_panel)
+        .ok_or_else(|| WildDatumError::NotFound(format!("panel {}", rule.source_panel)))?;
+    let layer = view
+        .layers
+        .iter()
+        .find(|layer| layer.id == panel.layer_id)
+        .ok_or_else(|| WildDatumError::NotFound(format!("layer {}", panel.layer_id)))?;
+    Ok(source_dataset.is_none_or(|dataset_id| layer.dataset_id.0 == dataset_id))
 }
 
 fn verified_source_row_query(
@@ -1062,5 +1280,108 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("outside the source"));
+    }
+
+    #[tokio::test]
+    async fn resolves_an_accepted_cube_pixel_link_into_an_exact_spectrum_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = WildDatumService::open(ServicePaths::under(
+            directory.path().join("data"),
+            directory.path().join("cache"),
+        ))
+        .unwrap();
+        let path = directory.path().join("reflectance.h5");
+        let file = hdf5_metno::File::create(&path).unwrap();
+        let group = file.create_group("HARV/Reflectance").unwrap();
+        group
+            .new_dataset::<u16>()
+            .shape([2, 3, 4])
+            .create("Reflectance_Data")
+            .unwrap()
+            .write_raw(&(0_u16..24).collect::<Vec<_>>())
+            .unwrap();
+        group
+            .new_dataset::<f32>()
+            .shape([4])
+            .create("Wavelength")
+            .unwrap()
+            .write_raw(&[450.0_f32, 550.0, 650.0, 850.0])
+            .unwrap();
+        drop(file);
+
+        let manifest = service.import_local_file(&path).await.unwrap();
+        let suggestions = service
+            .suggest_views(std::slice::from_ref(&manifest.dataset_id.0))
+            .unwrap();
+        let suggestion = suggestions
+            .suggestions
+            .iter()
+            .find(|suggestion| suggestion.recipe == "spectral_cube_v1")
+            .unwrap();
+        let view = service
+            .create_view_from_suggestion(
+                &suggestion.suggestion_id,
+                std::slice::from_ref(&manifest.dataset_id.0),
+                None,
+            )
+            .unwrap();
+        let source_panel = view
+            .panels
+            .iter()
+            .find(|panel| panel.representation == "rgb")
+            .unwrap();
+        let array_path = source_panel.encoding["cube_array"].as_str().unwrap();
+        let selection = service
+            .save_selection(
+                &view.view_id.0,
+                SemanticSelection::CubePixel {
+                    dataset_id: manifest.dataset_id.clone(),
+                    array_path: array_path.into(),
+                    x: 1,
+                    y: 1,
+                    x_axis: 1,
+                    y_axis: 0,
+                    spectral_axis: 2,
+                    displayed_bands: vec![2, 1, 0],
+                },
+                json!({"source": "test"}),
+            )
+            .unwrap();
+
+        let resolution = service
+            .resolve_selection_links(&selection.selection_id.0)
+            .await
+            .unwrap();
+        assert_eq!(resolution.version, LINK_RESOLUTION_VERSION);
+        assert_eq!(resolution.links.len(), 1);
+        assert_eq!(resolution.links[0].status, LinkResolutionStatus::Resolved);
+        assert_eq!(resolution.links[0].exactness, LinkExactness::Exact);
+        let linked = resolution.links[0].result.as_ref().unwrap();
+        assert_eq!(linked.row_count, Some(4));
+        assert_eq!(linked.preview["rows"][0]["wavelength_nm"], 450.0);
+        assert_eq!(linked.preview["rows"][2]["value"], 18.0);
+        let persisted = service.get_result(&linked.result_id.0).unwrap();
+        assert_eq!(
+            persisted.source_selection.as_ref(),
+            Some(&selection.selection_id)
+        );
+        assert!(persisted.transformations.iter().any(|transformation| {
+            transformation.name == "view_link_resolution"
+                && transformation.parameters["resolver"] == "cube_pixel_to_spectrum"
+        }));
+
+        service
+            .patch_view(
+                &view.view_id.0,
+                view.revision,
+                json!({"name": "new revision"}),
+            )
+            .unwrap();
+        assert!(matches!(
+            service
+                .resolve_selection_links(&selection.selection_id.0)
+                .await,
+            Err(WildDatumError::Conflict(_))
+        ));
     }
 }
