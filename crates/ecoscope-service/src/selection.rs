@@ -3,8 +3,8 @@
 use chrono::Utc;
 use ecoscope_core::{
     DatasetManifest, DatasetQuery, EcoLayer, EcoScopeError, EcoViewSpec, GeoGeometry, Modality,
-    PINNED_RERUN_VERSION, QueryFilter, Result, ResultRecord, SelectionRecord, SemanticSelection,
-    Transformation,
+    PINNED_RERUN_VERSION, PROFILE_TRAJECTORY_VIEW_KIND, QueryFilter, Result, ResultRecord,
+    SelectionRecord, SemanticSelection, Transformation,
 };
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
@@ -70,9 +70,25 @@ impl EcoScopeService {
             SemanticSelection::Rows {
                 dataset_id,
                 predicate,
-                ..
+                row_count,
             } => {
                 ensure_dataset_in_view(view, &dataset_id.0)?;
+                if let Some(requested) = requested_dataset_id
+                    && requested != dataset_id.0
+                {
+                    return Err(EcoScopeError::Invalid(format!(
+                        "row selection belongs to dataset {}, not requested dataset {requested}",
+                        dataset_id.0
+                    )));
+                }
+                if let Some(query) = verified_source_row_query(
+                    view,
+                    &dataset_id.0,
+                    predicate,
+                    *row_count,
+                )? {
+                    return Ok((dataset_id.0.clone(), query));
+                }
                 let filters = parse_selection_filters(predicate)?;
                 Ok((
                     dataset_id.0.clone(),
@@ -388,6 +404,156 @@ impl EcoScopeService {
     }
 }
 
+fn verified_source_row_query(
+    view: &EcoViewSpec,
+    dataset_id: &str,
+    predicate: &Value,
+    row_count: u64,
+) -> Result<Option<DatasetQuery>> {
+    let Some(object) = predicate.as_object() else {
+        return Ok(None);
+    };
+    for forbidden in ["source_index", "source_indices", "source_index_verified"] {
+        if object.contains_key(forbidden) {
+            return Err(EcoScopeError::Invalid(format!(
+                "viewer row predicate must not supply trusted field {forbidden}"
+            )));
+        }
+    }
+    let mapping_fields = [
+        "entity_path",
+        "instance_id",
+        "mapping_kind",
+        "rerun_version",
+    ];
+    if !mapping_fields
+        .iter()
+        .any(|field| object.contains_key(*field))
+    {
+        return Ok(None);
+    }
+    let unknown = object
+        .keys()
+        .filter(|key| !mapping_fields.contains(&key.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(EcoScopeError::Invalid(format!(
+            "viewer row predicate contains untrusted fields: {unknown:?}"
+        )));
+    }
+    if row_count != 1 {
+        return Err(EcoScopeError::Invalid(
+            "a Rerun instance selection must have row_count=1".into(),
+        ));
+    }
+    let entity_path = object
+        .get("entity_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| EcoScopeError::Invalid("viewer row predicate needs entity_path".into()))?
+        .trim_start_matches('/');
+    let instance_id = object
+        .get("instance_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            EcoScopeError::Invalid("viewer row predicate needs an integer instance_id".into())
+        })?;
+    let supplied_kind = object
+        .get("mapping_kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| EcoScopeError::Invalid("viewer row predicate needs mapping_kind".into()))?;
+    let supplied_version = object
+        .get("rerun_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| EcoScopeError::Invalid("viewer row predicate needs rerun_version".into()))?;
+
+    let (layer, entity_suffix) = view
+        .layers
+        .iter()
+        .find_map(|layer| {
+            let prefix = format!(
+                "datasets/{}/{}/",
+                layer.dataset_id,
+                safe_entity_component(&layer.id)
+            );
+            entity_path
+                .strip_prefix(&prefix)
+                .map(|suffix| (layer, suffix))
+        })
+        .ok_or_else(|| {
+            EcoScopeError::Invalid(format!(
+                "viewer entity {entity_path} does not belong to a view layer"
+            ))
+        })?;
+    if layer.dataset_id.0 != dataset_id {
+        return Err(EcoScopeError::Invalid(format!(
+            "viewer entity belongs to dataset {}, not {dataset_id}",
+            layer.dataset_id
+        )));
+    }
+    if !matches!(layer.modality, Modality::Tabular | Modality::TimeSeries)
+        || layer.encoding.get("view_kind").and_then(Value::as_str)
+            != Some(PROFILE_TRAJECTORY_VIEW_KIND)
+    {
+        return Err(EcoScopeError::Invalid(
+            "viewer row mapping requires a validated profile_trajectory_v1 layer".into(),
+        ));
+    }
+    let mapping = layer
+        .encoding
+        .get("selection_mapping")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            EcoScopeError::Invalid("profile/trajectory layer has no selection mapping".into())
+        })?;
+    let mapping_kind = mapping.get("kind").and_then(Value::as_str);
+    if mapping_kind != Some("source_row_index") || Some(supplied_kind) != mapping_kind {
+        return Err(EcoScopeError::Invalid(
+            "viewer row mapping kind does not match the service mapping".into(),
+        ));
+    }
+    let mapping_version = mapping.get("rerun_version").and_then(Value::as_str);
+    if mapping_version != Some(PINNED_RERUN_VERSION) || Some(supplied_version) != mapping_version {
+        return Err(EcoScopeError::Invalid(format!(
+            "viewer row mapping requires Rerun {PINNED_RERUN_VERSION}"
+        )));
+    }
+    let allowed_suffix = mapping
+        .get("entity_suffixes")
+        .and_then(Value::as_array)
+        .is_some_and(|suffixes| suffixes.iter().any(|suffix| suffix == entity_suffix));
+    if !allowed_suffix || entity_suffix.contains('/') {
+        return Err(EcoScopeError::Invalid(format!(
+            "entity suffix {entity_suffix} is not an observation mapping"
+        )));
+    }
+    let stride = mapping
+        .get("stride")
+        .and_then(Value::as_u64)
+        .filter(|stride| *stride > 0)
+        .ok_or_else(|| EcoScopeError::Invalid("source row mapping has invalid stride".into()))?;
+    let source_index = instance_id
+        .checked_mul(stride)
+        .ok_or_else(|| EcoScopeError::Invalid("viewer instance source index overflowed".into()))?;
+    Ok(Some(DatasetQuery::SourceRows {
+        source_indices: vec![source_index],
+        select: vec![],
+    }))
+}
+
+fn safe_entity_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 fn verified_point_source_indices(
     view: &EcoViewSpec,
     dataset_id: &str,
@@ -535,13 +701,101 @@ fn parse_selection_filters(predicate: &Value) -> Result<Vec<QueryFilter>> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
+    use std::{fs::File, io::Write};
 
-    use ecoscope_core::{DatasetId, GeoGeometry, SemanticSelection};
+    use ecoscope_core::{
+        DatasetId, GeoGeometry, ProfileTrajectoryRecipeV1, ProfileValueSpec, SemanticSelection,
+        VerticalAxisSpec, VerticalDirection,
+    };
     use serde_json::json;
 
     use super::*;
     use crate::ServicePaths;
+
+    async fn profile_view(
+        directory: &tempfile::TempDir,
+        service: &EcoScopeService,
+    ) -> (DatasetManifest, EcoViewSpec) {
+        let path = directory.path().join("profile.csv");
+        let mut file = File::create(&path).unwrap();
+        writeln!(
+            file,
+            "platform,cycle,time,latitude,longitude,pressure,pres_qc,temperature,temp_qc"
+        )
+        .unwrap();
+        for index in 0..8 {
+            writeln!(
+                file,
+                "FLOAT_1,1,t{index},{},{},{},1,{},{}",
+                34.8 + index as f64 / 100.0,
+                -75.5 + index as f64 / 100.0,
+                index * 10,
+                18.0 - index as f64 / 10.0,
+                if index == 7 { 4 } else { 1 }
+            )
+            .unwrap();
+        }
+        let manifest = service.import_local_file(&path).await.unwrap();
+        let view = service
+            .create_view("Profile".into(), vec![manifest.dataset_id.clone()])
+            .unwrap();
+        let view = service
+            .configure_profile_trajectory_view(
+                &view.view_id.0,
+                1,
+                "layer_1",
+                ProfileTrajectoryRecipeV1 {
+                    trajectory_id_field: "platform".into(),
+                    profile_id_field: "cycle".into(),
+                    time_field: Some("time".into()),
+                    latitude_field: "latitude".into(),
+                    longitude_field: "longitude".into(),
+                    vertical: VerticalAxisSpec {
+                        field: "pressure".into(),
+                        direction: VerticalDirection::PositiveDown,
+                        unit: Some("decibar".into()),
+                        fill_values: vec![],
+                    },
+                    value: ProfileValueSpec {
+                        field: "temperature".into(),
+                        unit: Some("degree_Celsius".into()),
+                        qc_field: Some("temp_qc".into()),
+                        accepted_qc: vec!["1".into(), "2".into()],
+                        fill_values: vec![],
+                    },
+                },
+            )
+            .unwrap();
+        (manifest, view)
+    }
+
+    fn viewer_row_selection(
+        service: &EcoScopeService,
+        view: &EcoViewSpec,
+        dataset_id: DatasetId,
+        predicate: Value,
+    ) -> SelectionRecord {
+        service
+            .save_selection(
+                &view.view_id.0,
+                SemanticSelection::Rows {
+                    dataset_id,
+                    predicate,
+                    row_count: 1,
+                },
+                json!({"source": "rerun_web_viewer"}),
+            )
+            .unwrap()
+    }
+
+    fn valid_viewer_predicate(dataset_id: &DatasetId) -> Value {
+        json!({
+            "entity_path": format!("datasets/{dataset_id}/layer_1/map_observations"),
+            "instance_id": 7,
+            "mapping_kind": "source_row_index",
+            "rerun_version": PINNED_RERUN_VERSION
+        })
+    }
 
     #[tokio::test]
     async fn regenerates_a_vector_query_from_exact_map_selection_state() {
@@ -653,5 +907,151 @@ mod tests {
         assert_eq!(result.preview["rows"][0]["z"], 14.0);
         assert_eq!(result.preview["selection_mode"], "source_indices");
         assert_eq!(result.source_selection, Some(selection.selection_id));
+    }
+
+    #[tokio::test]
+    async fn regenerates_an_exact_profile_row_from_untrusted_rerun_instance_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = EcoScopeService::open(ServicePaths::under(
+            directory.path().join("data"),
+            directory.path().join("cache"),
+        ))
+        .unwrap();
+        let (manifest, view) = profile_view(&directory, &service).await;
+        let selection = viewer_row_selection(
+            &service,
+            &view,
+            manifest.dataset_id.clone(),
+            valid_viewer_predicate(&manifest.dataset_id),
+        );
+
+        let result = service
+            .query_selection(&selection.selection_id.0, None, 100_000)
+            .await
+            .unwrap();
+
+        assert_eq!(result.row_count, Some(1));
+        assert_eq!(result.preview["rows"][0]["source_index"], 7);
+        assert_eq!(result.preview["rows"][0]["values"]["pressure"], "70");
+        assert_eq!(result.preview["rows"][0]["values"]["temp_qc"], "4");
+        assert_eq!(result.source_selection, Some(selection.selection_id));
+    }
+
+    #[tokio::test]
+    async fn rejects_forged_or_incompatible_profile_instance_mappings() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = EcoScopeService::open(ServicePaths::under(
+            directory.path().join("data"),
+            directory.path().join("cache"),
+        ))
+        .unwrap();
+        let (manifest, view) = profile_view(&directory, &service).await;
+        let base = valid_viewer_predicate(&manifest.dataset_id);
+
+        let cases = [
+            (
+                "dataset absent",
+                DatasetId("ds_absent".into()),
+                base.clone(),
+                "not part of view",
+            ),
+            (
+                "another layer",
+                manifest.dataset_id.clone(),
+                json!({
+                    "entity_path": format!("datasets/{}/layer_2/map_observations", manifest.dataset_id),
+                    "instance_id": 7,
+                    "mapping_kind": "source_row_index",
+                    "rerun_version": PINNED_RERUN_VERSION
+                }),
+                "does not belong to a view layer",
+            ),
+            (
+                "line entity",
+                manifest.dataset_id.clone(),
+                json!({
+                    "entity_path": format!("datasets/{}/layer_1/profile_lines", manifest.dataset_id),
+                    "instance_id": 7,
+                    "mapping_kind": "source_row_index",
+                    "rerun_version": PINNED_RERUN_VERSION
+                }),
+                "not an observation mapping",
+            ),
+            (
+                "unknown observation suffix",
+                manifest.dataset_id.clone(),
+                json!({
+                    "entity_path": format!("datasets/{}/layer_1/other_observations", manifest.dataset_id),
+                    "instance_id": 7,
+                    "mapping_kind": "source_row_index",
+                    "rerun_version": PINNED_RERUN_VERSION
+                }),
+                "not an observation mapping",
+            ),
+            (
+                "non-integer instance",
+                manifest.dataset_id.clone(),
+                json!({
+                    "entity_path": format!("datasets/{}/layer_1/map_observations", manifest.dataset_id),
+                    "instance_id": 7.5,
+                    "mapping_kind": "source_row_index",
+                    "rerun_version": PINNED_RERUN_VERSION
+                }),
+                "integer instance_id",
+            ),
+            (
+                "wrong Rerun",
+                manifest.dataset_id.clone(),
+                json!({
+                    "entity_path": format!("datasets/{}/layer_1/map_observations", manifest.dataset_id),
+                    "instance_id": 7,
+                    "mapping_kind": "source_row_index",
+                    "rerun_version": "0.0.0"
+                }),
+                "requires Rerun",
+            ),
+            (
+                "forged source index",
+                manifest.dataset_id.clone(),
+                json!({
+                    "entity_path": format!("datasets/{}/layer_1/map_observations", manifest.dataset_id),
+                    "instance_id": 7,
+                    "mapping_kind": "source_row_index",
+                    "rerun_version": PINNED_RERUN_VERSION,
+                    "source_indices": [0],
+                    "source_index_verified": true
+                }),
+                "must not supply trusted field",
+            ),
+        ];
+        for (name, dataset_id, predicate, expected) in cases {
+            let selection = viewer_row_selection(&service, &view, dataset_id, predicate);
+            let error = service
+                .query_selection(&selection.selection_id.0, None, 100_000)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{name}: {error}");
+        }
+
+        let mut without_recipe = view.clone();
+        without_recipe.layers[0].encoding.remove("view_kind");
+        let selection =
+            viewer_row_selection(&service, &view, manifest.dataset_id.clone(), base.clone());
+        let error = service
+            .selection_to_query(&without_recipe, &selection, None, 100_000)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("validated profile_trajectory_v1"));
+
+        let mut outside = base;
+        outside["instance_id"] = json!(999);
+        let selection = viewer_row_selection(&service, &view, manifest.dataset_id, outside);
+        let error = service
+            .query_selection(&selection.selection_id.0, None, 100_000)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("outside the source"));
     }
 }

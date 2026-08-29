@@ -1,6 +1,8 @@
 import {WebViewer, type EntityItem, type SelectionChangeEvent} from "@rerun-io/web-viewer";
 import "./style.css";
 
+const PINNED_RERUN_VERSION = "0.36.2";
+
 const token = new URLSearchParams(window.location.search).get("token");
 if (!token) {
   throw new Error("This EcoScope explorer link is missing its launch token.");
@@ -88,6 +90,30 @@ function semanticSelection(event: SelectionChangeEvent, view: any): Record<strin
   const datasetId = String(layer?.dataset_id ?? view.dataset_ids?.[0] ?? "");
   const modality = String(layer?.modality ?? "unknown");
   const position = primary.position;
+  const selectionMapping = layer?.encoding?.selection_mapping;
+  const allowedEntitySuffixes: string[] = Array.isArray(selectionMapping?.entity_suffixes)
+    ? selectionMapping.entity_suffixes.map((suffix: unknown) => String(suffix))
+    : [];
+
+  if (
+    layer?.encoding?.view_kind === "profile_trajectory_v1" &&
+    selectionMapping?.kind === "source_row_index" &&
+    selectionMapping?.rerun_version === PINNED_RERUN_VERSION &&
+    Number.isInteger(primary.instance_id) &&
+    allowedEntitySuffixes.some((suffix: string) => primary.entity_path.endsWith(`/${suffix}`))
+  ) {
+    return {
+      type: "rows",
+      dataset_id: datasetId,
+      predicate: {
+        entity_path: primary.entity_path,
+        instance_id: primary.instance_id,
+        mapping_kind: selectionMapping.kind,
+        rerun_version: selectionMapping.rerun_version
+      },
+      row_count: 1
+    };
+  }
 
   if (position && ["hyperspectral", "tensor"].includes(modality)) {
     const encoding = layer?.encoding ?? {};

@@ -87,6 +87,31 @@ test("profile trajectory contract exposes a real Rerun instance pick", async ({p
     15
   );
   expect(mapPick.item.instance_id).toBe(15);
+  expect(mapPick.record.selection.type).toBe("rows");
+  expect(mapPick.record.selection.dataset_id).toBeTruthy();
+  expect(mapPick.record.selection.row_count).toBe(1);
+  expect(mapPick.record.selection.predicate).toEqual({
+    entity_path: mapPick.item.entity_path,
+    instance_id: 15,
+    mapping_kind: "source_row_index",
+    rerun_version: "0.36.2"
+  });
+  expect(mapPick.record.selection.predicate).not.toHaveProperty("source_index");
+  expect(mapPick.record.selection.predicate).not.toHaveProperty("source_indices");
+  expect(mapPick.record.selection.predicate).not.toHaveProperty("source_index_verified");
+
+  const queried = await execute(
+    executable,
+    ["query-selection", mapPick.record.selection_id],
+    {env: demoEnvironment(), timeout: 30_000}
+  );
+  const exactRow = JSON.parse(queried.stdout);
+  expect(exactRow.preview.rows[0].source_index).toBe(15);
+  expect(exactRow.preview.rows[0].values.platform_number).toBe("FLOAT_SYNTH_001");
+  expect(exactRow.preview.rows[0].values.cycle_number).toBe("2");
+  expect(exactRow.preview.rows[0].values.pres).toBe("700");
+  expect(exactRow.preview.rows[0].values.temp_adjusted).toBe("7.94");
+  expect(exactRow.preview.rows[0].values.temp_adjusted_qc).toBe("1");
 
   const profilePick = await clickNearObservation(
     page,
@@ -97,6 +122,9 @@ test("profile trajectory contract exposes a real Rerun instance pick", async ({p
   expect(Number.isInteger(profilePick.item.instance_id)).toBe(true);
   expect(profilePick.item.instance_id).toBeGreaterThanOrEqual(0);
   expect(profilePick.item.instance_id).toBeLessThan(16);
+  expect(profilePick.record.selection.type).toBe("rows");
+  expect(profilePick.record.selection.predicate.instance_id).toBe(profilePick.item.instance_id);
+  expect(profilePick.record.selection.predicate.entity_path).toBe(profilePick.item.entity_path);
   await expect(page.locator("#viewer")).not.toContainText("Rerun has crashed");
   if (process.env.ECOSCOPE_PROFILE_SCREENSHOT) {
     await page.screenshot({
