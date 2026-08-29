@@ -265,16 +265,25 @@ pub struct CatalogEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DatasetRequest {
     pub provider: ProviderKind,
-    pub product_code: String,
+    #[serde(alias = "product_code")]
+    pub resource_id: String,
+    #[serde(default, alias = "sites")]
+    pub locations: Vec<String>,
+    #[serde(default, alias = "start_month")]
+    pub temporal_start: Option<String>,
+    #[serde(default, alias = "end_month")]
+    pub temporal_end: Option<String>,
     #[serde(default)]
-    pub sites: Vec<String>,
-    pub start_month: Option<String>,
-    pub end_month: Option<String>,
+    pub spatial_filter: Option<GeoGeometry>,
+    #[serde(default)]
+    pub variables: Vec<String>,
     pub release: Option<String>,
     #[serde(default = "default_package")]
     pub package: String,
     #[serde(default)]
     pub include_provisional: bool,
+    #[serde(default)]
+    pub provider_options: BTreeMap<String, Value>,
 }
 
 fn default_package() -> String {
@@ -288,8 +297,12 @@ pub struct PlannedFile {
     pub size_bytes: Option<u64>,
     pub checksum: Option<Checksum>,
     pub download_url: Option<String>,
-    pub site: Option<String>,
-    pub month: Option<String>,
+    #[serde(default, alias = "site")]
+    pub location: Option<String>,
+    #[serde(default, alias = "month")]
+    pub temporal_partition: Option<String>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, Value>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 
@@ -335,8 +348,10 @@ pub struct SourceFile {
     pub size_bytes: u64,
     pub checksum: Checksum,
     pub media_type: Option<String>,
-    pub site: Option<String>,
-    pub month: Option<String>,
+    #[serde(default, alias = "site")]
+    pub location: Option<String>,
+    #[serde(default, alias = "month")]
+    pub temporal_partition: Option<String>,
     #[serde(default)]
     pub metadata: BTreeMap<String, Value>,
 }
@@ -410,12 +425,17 @@ pub struct CubeDescriptor {
 pub struct DatasetManifest {
     pub dataset_id: DatasetId,
     pub provider: ProviderKind,
-    pub product_code: String,
-    pub product_revision: Option<String>,
+    #[serde(alias = "product_code")]
+    pub resource_id: String,
+    #[serde(default, alias = "product_revision")]
+    pub resource_version: Option<String>,
     pub modalities: Vec<Modality>,
-    pub sites: Vec<String>,
-    pub start_month: Option<String>,
-    pub end_month: Option<String>,
+    #[serde(default, alias = "sites")]
+    pub locations: Vec<String>,
+    #[serde(default, alias = "start_month")]
+    pub temporal_start: Option<String>,
+    #[serde(default, alias = "end_month")]
+    pub temporal_end: Option<String>,
     pub release: Option<String>,
     pub package: Option<String>,
     pub include_provisional: bool,
@@ -433,6 +453,8 @@ pub struct DatasetManifest {
     pub cubes: Vec<CubeDescriptor>,
     pub license: Option<LicenseMetadata>,
     pub citation: Option<CitationMetadata>,
+    #[serde(default)]
+    pub provider_metadata: BTreeMap<String, Value>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -946,13 +968,16 @@ mod tests {
             plan_id: PlanId("plan_fixed".into()),
             request: DatasetRequest {
                 provider: ProviderKind::Neon,
-                product_code: "DP1.00094.001".into(),
-                sites: vec!["HARV".into()],
-                start_month: Some("2024-01".into()),
-                end_month: Some("2024-02".into()),
+                resource_id: "DP1.00094.001".into(),
+                locations: vec!["HARV".into()],
+                temporal_start: Some("2024-01".into()),
+                temporal_end: Some("2024-02".into()),
+                spatial_filter: None,
+                variables: vec![],
                 release: Some("RELEASE-2025".into()),
                 package: "basic".into(),
                 include_provisional: false,
+                provider_options: BTreeMap::new(),
             },
             plan_hash: String::new(),
             file_count: 0,
@@ -975,13 +1000,16 @@ mod tests {
             plan_id: PlanId("plan_fixed".into()),
             request: DatasetRequest {
                 provider: ProviderKind::Neon,
-                product_code: "DP3.30006.002".into(),
-                sites: vec!["HARV".into()],
-                start_month: Some("2024-01".into()),
-                end_month: Some("2024-02".into()),
+                resource_id: "DP3.30006.002".into(),
+                locations: vec!["HARV".into()],
+                temporal_start: Some("2024-01".into()),
+                temporal_end: Some("2024-02".into()),
+                spatial_filter: None,
+                variables: vec![],
                 release: Some("RELEASE-2025".into()),
                 package: "basic".into(),
                 include_provisional: false,
+                provider_options: BTreeMap::new(),
             },
             plan_hash: String::new(),
             file_count: 0,
