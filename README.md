@@ -80,7 +80,7 @@ The alpha ships self-contained macOS universal and Linux x86-64 packages. You
 do not need Rust, Node.js, CMake, or a separate Rerun installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/krnzt/wilddatum/v0.1.0-alpha.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/krnzt/wilddatum/v0.1.0-alpha.2/scripts/install.sh | sh
 ```
 
 The installer verifies the release SHA-256, installs under `~/.local` by

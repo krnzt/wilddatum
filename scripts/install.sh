@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${WILDDATUM_VERSION:-${ECOSCOPE_VERSION:-v0.1.0-alpha.1}}"
+version="${WILDDATUM_VERSION:-${ECOSCOPE_VERSION:-v0.1.0-alpha.2}}"
 install_root="${WILDDATUM_INSTALL_DIR:-${ECOSCOPE_INSTALL_DIR:-${HOME:?HOME is not set}/.local}}"
 repo="https://github.com/krnzt/wilddatum"
 os="$(uname -s)"
