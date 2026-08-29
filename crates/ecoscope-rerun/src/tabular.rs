@@ -3,12 +3,11 @@ use std::{
     path::Path,
 };
 
-use ecoscope_core::{EcoScopeError, Result};
+use ecoscope_core::{EcoScopeError, PROFILE_TRAJECTORY_VIEW_KIND, Result};
 use serde_json::{Value, json};
 
 use crate::rerun_error;
 
-pub(crate) const PROFILE_TRAJECTORY_VIEW_KIND: &str = "profile_trajectory_v1";
 const MAX_PROFILE_TRAJECTORY_ROWS: usize = 100_000;
 
 #[derive(Debug, Clone)]

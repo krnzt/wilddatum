@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use chrono::Utc;
 use ecoscope_core::{
     CredentialRef, DatasetId, DatasetQuery, DatasetRequest, EcoScopeError, ExportFormat,
-    ExportRequest, JobStatus, MAX_MCP_RESULT_BYTES, ProviderCapability, ProviderKind,
-    ProviderManifest, ProviderStatus, ResourceQuery, ResultId, SemanticSelection,
+    ExportRequest, JobStatus, MAX_MCP_RESULT_BYTES, ProfileTrajectoryRecipeV1, ProfileValueSpec,
+    ProviderCapability, ProviderKind, ProviderManifest, ProviderStatus, ResourceQuery, ResultId,
+    SemanticSelection, VerticalAxisSpec, VerticalDirection,
 };
 use ecoscope_provider_api::{EcologicalDataProvider, PROVIDER_PROTOCOL_VERSION, validate_manifest};
 use ecoscope_provider_erddap::{ErddapProvider, config as erddap_config};
@@ -326,6 +327,26 @@ pub struct ConfigureCubeInput {
     pub add_offset: Option<f64>,
     #[serde(default)]
     pub bad_bands: Vec<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ConfigureProfileTrajectoryInput {
+    pub view_id: String,
+    pub expected_revision: u64,
+    pub layer_id: String,
+    pub trajectory_id_field: String,
+    pub profile_id_field: String,
+    pub time_field: Option<String>,
+    pub latitude_field: String,
+    pub longitude_field: String,
+    pub vertical_field: String,
+    pub vertical_direction: VerticalDirection,
+    pub vertical_unit: Option<String>,
+    pub value_field: String,
+    pub value_unit: Option<String>,
+    pub qc_field: Option<String>,
+    #[serde(default)]
+    pub accepted_qc: Vec<String>,
 }
 
 fn default_y_axis() -> u32 {
@@ -871,6 +892,42 @@ impl EcoScopeMcp {
     }
 
     #[tool(
+        description = "Configure a validated linked map and vertical-profile view over a CSV/TSV layer, with exact source-row selection semantics"
+    )]
+    async fn configure_profile_trajectory_view(
+        &self,
+        Parameters(input): Parameters<ConfigureProfileTrajectoryInput>,
+    ) -> CallToolResult {
+        let recipe = ProfileTrajectoryRecipeV1 {
+            trajectory_id_field: input.trajectory_id_field,
+            profile_id_field: input.profile_id_field,
+            time_field: input.time_field,
+            latitude_field: input.latitude_field,
+            longitude_field: input.longitude_field,
+            vertical: VerticalAxisSpec {
+                field: input.vertical_field,
+                direction: input.vertical_direction,
+                unit: input.vertical_unit,
+            },
+            value: ProfileValueSpec {
+                field: input.value_field,
+                unit: input.value_unit,
+                qc_field: input.qc_field,
+                accepted_qc: input.accepted_qc,
+            },
+        };
+        match self.service.configure_profile_trajectory_view(
+            &input.view_id,
+            input.expected_revision,
+            &input.layer_id,
+            recipe,
+        ) {
+            Ok(view) => bounded_serializable(view),
+            Err(error) => tool_error(error),
+        }
+    }
+
+    #[tool(
         description = "Configure an HDF5 hyperspectral layer using explicit dataset, axis, band, no-data, and display-range semantics"
     )]
     async fn configure_hyperspectral_view(
@@ -1315,8 +1372,16 @@ mod tests {
             assert_eq!(provider.provider_id(), provider_id);
         }
         let table_path = directory.path().join("observations.csv");
-        std::fs::write(&table_path, "site,value\nHARV,1\nHARV,3\nABBY,8\n")?;
+        std::fs::write(
+            &table_path,
+            "site,value,platform,cycle,time,latitude,longitude,pressure,temperature,temperature_qc\n\
+             HARV,1,FLOAT_1,1,2026-01-01T00:00:00Z,34.8,-75.5,0,18.4,1\n\
+             HARV,3,FLOAT_1,1,2026-01-01T00:10:00Z,34.9,-75.4,10,18.0,1\n\
+             ABBY,8,FLOAT_1,1,2026-01-01T00:20:00Z,35.0,-75.3,20,17.6,4\n",
+        )?;
         let dataset = service.import_local_file(&table_path).await?;
+        let profile_view =
+            service.create_view("profile".into(), vec![dataset.dataset_id.clone()])?;
         let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
         let server = tokio::spawn(async move {
             EcoScopeMcp::new(service)
@@ -1346,6 +1411,7 @@ mod tests {
             "inspect_result",
             "export_result",
             "create_view",
+            "configure_profile_trajectory_view",
             "inspect_view",
             "inspect_selection",
             "query_selection",
@@ -1463,6 +1529,42 @@ mod tests {
         assert_eq!(exact_preview["rows"][0]["values"]["site"], "ABBY");
         assert_eq!(exact_preview["rows"][1]["source_index"], 0);
         assert_eq!(exact_preview["rows"][1]["values"]["value"], "1");
+        let configured = client
+            .call_tool(
+                CallToolRequestParams::new("configure_profile_trajectory_view").with_arguments(
+                    json!({
+                        "view_id": profile_view.view_id,
+                        "expected_revision": 1,
+                        "layer_id": "layer_1",
+                        "trajectory_id_field": "platform",
+                        "profile_id_field": "cycle",
+                        "time_field": "time",
+                        "latitude_field": "latitude",
+                        "longitude_field": "longitude",
+                        "vertical_field": "pressure",
+                        "vertical_direction": "positive_down",
+                        "vertical_unit": "decibar",
+                        "value_field": "temperature",
+                        "value_unit": "degree_Celsius",
+                        "qc_field": "temperature_qc",
+                        "accepted_qc": ["1", "2"]
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+            )
+            .await?;
+        assert_ne!(configured.is_error, Some(true));
+        let configured_view = configured
+            .structured_content
+            .as_ref()
+            .expect("configured view content");
+        assert_eq!(configured_view["revision"], 2);
+        assert_eq!(
+            configured_view["layers"][0]["encoding"]["selection_mapping"]["kind"],
+            "source_row_index"
+        );
         let export = client
             .call_tool(
                 CallToolRequestParams::new("export_result").with_arguments(

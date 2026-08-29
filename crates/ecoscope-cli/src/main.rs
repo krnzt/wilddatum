@@ -2,7 +2,9 @@ use std::{collections::BTreeMap, path::PathBuf, process::Command};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use ecoscope_core::DatasetId;
+use ecoscope_core::{
+    DatasetId, ProfileTrajectoryRecipeV1, ProfileValueSpec, VerticalAxisSpec, VerticalDirection,
+};
 use ecoscope_provider_api::EcologicalDataProvider;
 use ecoscope_provider_process::{ProcessProvider, ProcessProviderConfig, discover_configs};
 use ecoscope_service::EcoScopeService;
@@ -106,6 +108,36 @@ enum Commands {
         #[arg(long)]
         blue_band: Option<u32>,
     },
+    /// Configure a validated linked trajectory map and vertical profile.
+    ConfigureProfileTrajectory {
+        view_id: String,
+        #[arg(long, default_value = "layer_1")]
+        layer_id: String,
+        #[arg(long)]
+        trajectory_id_field: String,
+        #[arg(long)]
+        profile_id_field: String,
+        #[arg(long)]
+        time_field: Option<String>,
+        #[arg(long)]
+        latitude_field: String,
+        #[arg(long)]
+        longitude_field: String,
+        #[arg(long)]
+        vertical_field: String,
+        #[arg(long, value_enum)]
+        vertical_direction: VerticalDirectionArg,
+        #[arg(long)]
+        vertical_unit: Option<String>,
+        #[arg(long)]
+        value_field: String,
+        #[arg(long)]
+        value_unit: Option<String>,
+        #[arg(long)]
+        qc_field: Option<String>,
+        #[arg(long = "accept-qc")]
+        accepted_qc: Vec<String>,
+    },
     /// Generate a Rerun recording from a semantic view.
     Render {
         view_id: String,
@@ -161,6 +193,21 @@ enum DemoKind {
 enum McpHost {
     Codex,
     Claude,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum VerticalDirectionArg {
+    PositiveDown,
+    PositiveUp,
+}
+
+impl From<VerticalDirectionArg> for VerticalDirection {
+    fn from(value: VerticalDirectionArg) -> Self {
+        match value {
+            VerticalDirectionArg::PositiveDown => Self::PositiveDown,
+            VerticalDirectionArg::PositiveUp => Self::PositiveUp,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -293,6 +340,48 @@ async fn main() -> Result<()> {
             }
             let configured =
                 service.configure_layer_encoding(&view_id, view.revision, &layer_id, encoding)?;
+            print_json(&configured)?;
+        }
+        Commands::ConfigureProfileTrajectory {
+            view_id,
+            layer_id,
+            trajectory_id_field,
+            profile_id_field,
+            time_field,
+            latitude_field,
+            longitude_field,
+            vertical_field,
+            vertical_direction,
+            vertical_unit,
+            value_field,
+            value_unit,
+            qc_field,
+            accepted_qc,
+        } => {
+            let view = service.get_view(&view_id)?;
+            let configured = service.configure_profile_trajectory_view(
+                &view_id,
+                view.revision,
+                &layer_id,
+                ProfileTrajectoryRecipeV1 {
+                    trajectory_id_field,
+                    profile_id_field,
+                    time_field,
+                    latitude_field,
+                    longitude_field,
+                    vertical: VerticalAxisSpec {
+                        field: vertical_field,
+                        direction: vertical_direction.into(),
+                        unit: vertical_unit,
+                    },
+                    value: ProfileValueSpec {
+                        field: value_field,
+                        unit: value_unit,
+                        qc_field,
+                        accepted_qc,
+                    },
+                },
+            )?;
             print_json(&configured)?;
         }
         Commands::Render { view_id, output } => {
@@ -597,4 +686,60 @@ fn shell_display(path: &std::path::Path) -> String {
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_trajectory_command_parses_the_public_cli_contract() {
+        let cli = Cli::try_parse_from([
+            "ecoscope",
+            "configure-profile-trajectory",
+            "view_1",
+            "--layer-id",
+            "layer_1",
+            "--trajectory-id-field",
+            "platform_number",
+            "--profile-id-field",
+            "cycle_number",
+            "--time-field",
+            "time",
+            "--latitude-field",
+            "latitude",
+            "--longitude-field",
+            "longitude",
+            "--vertical-field",
+            "pres",
+            "--vertical-direction",
+            "positive-down",
+            "--vertical-unit",
+            "decibar",
+            "--value-field",
+            "temp_adjusted",
+            "--value-unit",
+            "degree_Celsius",
+            "--qc-field",
+            "temp_adjusted_qc",
+            "--accept-qc",
+            "1",
+            "--accept-qc",
+            "2",
+        ])
+        .unwrap();
+        let Commands::ConfigureProfileTrajectory {
+            accepted_qc,
+            vertical_direction,
+            ..
+        } = cli.command
+        else {
+            panic!("wrong command parsed");
+        };
+        assert_eq!(accepted_qc, ["1", "2"]);
+        assert!(matches!(
+            vertical_direction,
+            VerticalDirectionArg::PositiveDown
+        ));
+    }
 }

@@ -1,5 +1,13 @@
 //! Stable domain model shared by EcoScope providers, storage, MCP tools, and viewers.
 
+pub mod profile_trajectory;
+
+pub use profile_trajectory::{
+    PROFILE_TRAJECTORY_OBSERVATION_SUFFIXES, PROFILE_TRAJECTORY_VIEW_KIND,
+    ProfileTrajectoryRecipeV1, ProfileValueSpec, SourceRowSelectionMapping, VerticalAxisSpec,
+    VerticalDirection,
+};
+
 use std::{collections::BTreeMap, fmt, path::Path};
 
 use chrono::{DateTime, Utc};

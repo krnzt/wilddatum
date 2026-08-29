@@ -2,6 +2,7 @@
 
 mod cube;
 mod point_cloud;
+mod profile_trajectory;
 mod query;
 mod selection;
 

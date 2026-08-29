@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, io::Read, path::Path};
 
 use anyhow::{Context, Result, bail};
-use ecoscope_core::{DatasetManifest, ViewLayout};
+use ecoscope_core::{
+    DatasetManifest, ProfileTrajectoryRecipeV1, ProfileValueSpec, VerticalAxisSpec,
+    VerticalDirection,
+};
 use ecoscope_service::EcoScopeService;
 use futures::StreamExt;
 use hdf5_metno as hdf5;
@@ -126,44 +129,38 @@ pub async fn profile_trajectory(service: &EcoScopeService) -> Result<DemoResult>
         std::fs::write(&source_path, PROFILE_TRAJECTORY_FIXTURE)?;
     }
     let manifest = import_or_reuse(service, &source_path).await?;
-    let mut view = service.create_view(
+    let view = service.create_view(
         "EcoScope synthetic profile and trajectory".into(),
         vec![manifest.dataset_id.clone()],
     )?;
-    view.layers[0].encoding = BTreeMap::from([
-        ("view_kind".into(), json!("profile_trajectory_v1")),
-        ("trajectory_id_field".into(), json!("platform_number")),
-        ("profile_id_field".into(), json!("cycle_number")),
-        ("time_field".into(), json!("time")),
-        ("latitude_field".into(), json!("latitude")),
-        ("longitude_field".into(), json!("longitude")),
-        (
-            "vertical".into(),
-            json!({"field": "pres", "direction": "positive_down", "unit": "decibar"}),
-        ),
-        (
-            "value".into(),
-            json!({
-                "field": "temp_adjusted",
-                "unit": "degree_Celsius",
-                "qc_field": "temp_adjusted_qc",
-                "accepted_qc": ["1", "2"]
-            }),
-        ),
-        (
-            "selection_mapping".into(),
-            json!({
-                "kind": "source_row_index",
-                "entity_suffixes": ["map_observations", "profile_observations"],
-                "stride": 1,
-                "rerun_version": ecoscope_core::PINNED_RERUN_VERSION
-            }),
-        ),
-    ]);
-    view.layout = ViewLayout::Single;
-    view.provenance_visible = false;
-    view.revision += 1;
-    service.save_view(&view)?;
+    let configured = service.configure_profile_trajectory_view(
+        &view.view_id.0,
+        view.revision,
+        "layer_1",
+        ProfileTrajectoryRecipeV1 {
+            trajectory_id_field: "platform_number".into(),
+            profile_id_field: "cycle_number".into(),
+            time_field: Some("time".into()),
+            latitude_field: "latitude".into(),
+            longitude_field: "longitude".into(),
+            vertical: VerticalAxisSpec {
+                field: "pres".into(),
+                direction: VerticalDirection::PositiveDown,
+                unit: Some("decibar".into()),
+            },
+            value: ProfileValueSpec {
+                field: "temp_adjusted".into(),
+                unit: Some("degree_Celsius".into()),
+                qc_field: Some("temp_adjusted_qc".into()),
+                accepted_qc: vec!["1".into(), "2".into()],
+            },
+        },
+    )?;
+    let view = service.patch_view(
+        &configured.view_id.0,
+        configured.revision,
+        json!({"layout": "single", "provenance_visible": false}),
+    )?;
     let recording = service
         .paths()
         .views_dir
@@ -431,5 +428,30 @@ mod tests {
                 .iter()
                 .any(|cube| cube.array_path == "/EcoScope/Reflectance")
         }));
+    }
+
+    #[tokio::test]
+    async fn profile_trajectory_demo_uses_the_validated_service_contract() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = EcoScopeService::open(ServicePaths::under(
+            directory.path().join("data"),
+            directory.path().join("cache"),
+        ))
+        .unwrap();
+
+        let demo = profile_trajectory(&service).await.unwrap();
+        let view = service.get_view(&demo.view_id).unwrap();
+
+        assert_eq!(view.revision, 3);
+        assert_eq!(
+            view.layers[0].encoding["view_kind"],
+            "profile_trajectory_v1"
+        );
+        assert_eq!(
+            view.layers[0].encoding["selection_mapping"]["kind"],
+            "source_row_index"
+        );
+        assert_eq!(view.layers[0].encoding["selection_mapping"]["stride"], 1);
+        assert!(std::fs::metadata(demo.recording).unwrap().len() > 10_000);
     }
 }
