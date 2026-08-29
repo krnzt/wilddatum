@@ -5,6 +5,13 @@ container records what is observable without guessing; a versioned mapping adds
 axis roles, wavelengths, CRS, no-data, scaling, or display bands when those
 semantics are ambiguous.
 
+`wilddatum inventory` / `inspect_scientific_inventory` summarize those
+semantics without returning full arrays or private paths. `wilddatum
+suggest-views` / `suggest_views` use the same bounded inventory to propose
+evidence-backed panels and links. Suggestions are advisory: an unresolved CRS,
+affine transform, QC policy, axis, or wavelength choice remains explicit rather
+than becoming a guessed rendering contract.
+
 | Source | Inspect/import | Scientific query | Rerun rendering | Important bounds or caveats |
 |---|---:|---:|---:|---|
 | CSV/TSV | yes | yes | yes | Arrow/DataFusion projection, predicates, grouping, ordering, and aggregation; bounded previews |

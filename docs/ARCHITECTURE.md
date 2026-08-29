@@ -11,6 +11,9 @@
 7. MCP responses remain small; large data move by local artifact handles.
 8. Provider capabilities are negotiated and provider-native metadata is never
    discarded merely because the shared model does not recognize it.
+9. Scientific inventories and view suggestions are derived, evidence-backed
+   advice. They never replace immutable manifests or silently confer trusted
+   source/spatial identity.
 
 ## Runtime
 
@@ -23,6 +26,7 @@ MCP host ──stdio──> wilddatum mcp
                        ├── negotiated community provider subprocesses
                        ├── local import adapters
                        ├── Arrow/DataFusion + spatial/cube/point queries
+                       ├── scientific inventory + view suggestion compiler
                        ├── durable result/export/derived artifacts
                        └── EcoViewSpec -> explicit Rerun blueprint + RRD
                                          │
@@ -33,6 +37,41 @@ The current executable opens SQLite directly from each process. WAL mode and
 optimistic view revisions permit safe sharing between the MCP server and
 browser/CLI processes. A dedicated IPC daemon can replace this without changing
 public interfaces when concurrent processing requirements justify it.
+
+## Scientific inventory and suggestion boundary
+
+`DatasetManifest` remains source truth. `ScientificInventory` is a bounded,
+regenerable interpretation of an existing manifest plus local inspection or
+provider metadata. It exposes fields, array axes, units, QC relationships,
+coordinate summaries, evidence, and unresolved decisions without returning
+local absolute paths or full coordinate vectors.
+
+Inference follows an explicit precedence:
+
+```text
+user-confirmed mapping
+    > provider/file metadata such as CF, CRS, LAS, or GeoArrow
+    > strong format convention
+    > field-name heuristic
+```
+
+Every inferred role carries its source and confidence. Weak field-name
+heuristics can support a suggestion but cannot establish CRS compatibility,
+source-row identity, or cross-dataset registration.
+
+`suggest_views` recognizes a bounded set of scientific recipes and returns
+ranked, deterministic `ViewSuggestion` objects. A suggestion contains proposed
+panels, encodings, links, link exactness, evidence, and unresolved decisions.
+It is advisory and side-effect free: it does not persist a view, start Rerun, or
+download data. At most eight unique dataset handles enter one request and at
+most twelve suggestions leave it; the normal MCP response-size ceiling still
+applies.
+
+The first multimodal recipe combines point-cloud, wavelength-aware RGB, and
+spectrum panels. RGB bands are selected from inspected wavelength coordinates,
+not institution-specific indices. Cube-pixel-to-spectrum can be exact from
+array axes alone. Point-to-pixel linking remains unavailable until both source
+CRS and the cube's world-to-pixel transform are authoritative.
 
 ## Rerun boundary
 
@@ -94,6 +133,7 @@ pixels or trust browser-authored scientific state.
 
 ```text
 source -> inspection -> plan -> approval -> materialization -> manifest
+       -> scientific inventory -> explained view suggestions
        -> bounded query -> durable result -> explicit blueprint + RRD
        -> human selection in source coordinates -> agent query -> export
 ```

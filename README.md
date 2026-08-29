@@ -68,6 +68,29 @@ to the exact original CSV/TSV record, including provider-native QC values.
   JSON-RPC contract; an RI contributor can work in Rust, Python, R, Go, or
   another language without adding provider-specific MCP tools.
 
+## Alpha.3 development: explained scientific views
+
+The main branch can now inspect the scientific structure of an existing local
+or materialized dataset without exposing its private path:
+
+```bash
+wilddatum inventory ds_...
+wilddatum suggest-views ds_lidar... ds_cube...
+```
+
+The equivalent registered MCP tools are `inspect_scientific_inventory` and
+`suggest_views`. Inventories contain bounded fields, arrays, axes, units, CF/QC
+relationships, evidence, and unresolved decisions. Suggestions are
+deterministic and side-effect free: they propose panels, encodings, and
+selection links but do not create or open a view.
+
+For the official NEON teaching pair, WildDatum reads the 107 measured
+wavelengths, selects bands nearest 650/550/450 nm, and ranks a 3D point-cloud +
+RGB + spectrum workspace first. Cube-pixel → spectrum is marked exact. LiDAR
+point → image pixel remains explicitly unavailable until the LAS CRS and HDF5
+world-to-pixel affine metadata are verified; similar-looking bounds are never
+treated as registration.
+
 Detailed support and caveats are in the [format matrix](docs/FORMATS.md). Design
 boundaries are documented in [architecture](docs/ARCHITECTURE.md) and
 [implementation decisions](docs/DECISIONS.md). Planned Research Infrastructure,

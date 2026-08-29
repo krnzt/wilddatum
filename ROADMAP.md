@@ -23,7 +23,7 @@ Rerun browser verification where visualization is involved.
   state.
 - Language-neutral community-provider subprocess protocol.
 
-## Next: interoperable public Research Infrastructures
+## Shipped: interoperable public Research Infrastructures
 
 The next release line establishes one standards adapter that can serve several
 RIs instead of adding institution-specific MCP tools.
@@ -39,6 +39,22 @@ RIs instead of adding institution-specific MCP tools.
   source-row selection and QC-aware configuration.
 - [x] Add synthetic fixtures and opt-in live smoke tests for all three public
   services; normal CI remains deterministic and offline.
+
+## Next: linked multimodal scientific workbench
+
+Alpha.3 deepens the human-agent visualization loop before adding another RI.
+
+- [x] Derive bounded provider-neutral scientific inventories containing fields,
+  arrays, axes, units, QC relationships, evidence, and unresolved semantics.
+- [x] Expose deterministic, evidence-backed view suggestions through the normal
+  MCP and CLI without creating a view or claiming unverified registration.
+- [ ] Add backward-compatible `EcoViewSpec` v2 panels and versioned link rules.
+- [ ] Compile an accepted suggestion into linked Rerun panels and highlight
+  derived selections with exactness and provenance.
+- [ ] Extract LAS CRS plus NEON HDF5 map/affine metadata and implement the exact
+  point-return → image-pixel → spectrum workflow.
+- [ ] Extend profile/trajectory views to multiple values, Parquet/Arrow source
+  identity, profile-aware downsampling, and depth/pressure ranges.
 
 ## Following: authenticated ecological repositories
 
