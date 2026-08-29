@@ -48,6 +48,27 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
     let client = SmokeClient.serve(transport).await?;
     let tools = client.list_all_tools().await?;
     anyhow::ensure!(tools.iter().any(|tool| tool.name == "inspect_view"));
+    let plan_tool = tools
+        .iter()
+        .find(|tool| tool.name == "plan_materialization")
+        .expect("plan_materialization tool");
+    let properties = plan_tool
+        .input_schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .expect("plan_materialization input properties");
+    for field in [
+        "resource_id",
+        "variables",
+        "spatial_filter",
+        "provider_options",
+    ] {
+        anyhow::ensure!(
+            properties.contains_key(field),
+            "missing {field} input field"
+        );
+    }
+    anyhow::ensure!(!properties.contains_key("selection"));
 
     let health = client
         .call_tool(CallToolRequestParams::new("health"))

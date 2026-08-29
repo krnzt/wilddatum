@@ -115,10 +115,21 @@ pub struct PlanMaterializationInput {
     #[serde(default = "default_provider")]
     pub provider: String,
     pub resource_id: String,
-    /// Provider-native selection. For NEON this contains sites, start_month,
-    /// end_month, optional release/package, and include_provisional.
     #[serde(default)]
-    pub selection: Value,
+    pub locations: Vec<String>,
+    pub temporal_start: Option<String>,
+    pub temporal_end: Option<String>,
+    pub spatial_filter: Option<ecoscope_core::GeoGeometry>,
+    #[serde(default)]
+    pub variables: Vec<String>,
+    pub release: Option<String>,
+    #[serde(default = "default_package")]
+    pub package: String,
+    #[serde(default)]
+    pub include_provisional: bool,
+    /// Provider-native options preserved verbatim in the plan and manifest.
+    #[serde(default)]
+    pub provider_options: BTreeMap<String, Value>,
 }
 
 fn default_provider() -> String {
@@ -480,13 +491,16 @@ impl EcoScopeMcp {
             } else {
                 ProviderKind::Other(provider_id.clone())
             },
-            product_code: input.product_code,
-            sites: input.sites,
-            start_month: Some(input.start_month),
-            end_month: Some(input.end_month),
+            resource_id: input.product_code,
+            locations: input.sites,
+            temporal_start: Some(input.start_month),
+            temporal_end: Some(input.end_month),
+            spatial_filter: None,
+            variables: vec![],
             release: input.release,
             package: input.package,
             include_provisional: input.include_provisional,
+            provider_options: BTreeMap::new(),
         };
         let result = if is_neon {
             match self.neon() {
@@ -519,32 +533,9 @@ impl EcoScopeMcp {
     ) -> CallToolResult {
         let is_neon = input.provider.eq_ignore_ascii_case("neon");
         let provider_id = input.provider.clone();
-        let selection = match input.selection.as_object() {
-            Some(selection) => selection,
-            None => {
-                return tool_error(EcoScopeError::Invalid(
-                    "selection must be a JSON object".into(),
-                ));
-            }
-        };
-        let string = |key: &str| {
-            selection
-                .get(key)
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        };
-        let sites = selection
-            .get("sites")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|value| value.as_str().map(str::to_owned))
-            .collect::<Vec<_>>();
-        let start_month = string("start_month");
-        let end_month = string("end_month");
-        if is_neon && (start_month.is_none() || end_month.is_none()) {
+        if is_neon && (input.temporal_start.is_none() || input.temporal_end.is_none()) {
             return tool_error(EcoScopeError::Invalid(
-                "NEON selection requires start_month and end_month".into(),
+                "NEON materialization requires temporal_start and temporal_end".into(),
             ));
         }
         let request = DatasetRequest {
@@ -553,16 +544,16 @@ impl EcoScopeMcp {
             } else {
                 ProviderKind::Other(provider_id.clone())
             },
-            product_code: input.resource_id,
-            sites,
-            start_month,
-            end_month,
-            release: string("release"),
-            package: string("package").unwrap_or_else(default_package),
-            include_provisional: selection
-                .get("include_provisional")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+            resource_id: input.resource_id,
+            locations: input.locations,
+            temporal_start: input.temporal_start,
+            temporal_end: input.temporal_end,
+            spatial_filter: input.spatial_filter,
+            variables: input.variables,
+            release: input.release,
+            package: input.package,
+            include_provisional: input.include_provisional,
+            provider_options: input.provider_options,
         };
         let result = if is_neon {
             match self.neon() {
