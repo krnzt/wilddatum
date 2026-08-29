@@ -64,7 +64,9 @@ row; for a mapped cube, an image click maps back to the complete source spectrum
 
 Detailed support and caveats are in the [format matrix](docs/FORMATS.md). Design
 boundaries are documented in [architecture](docs/ARCHITECTURE.md) and
-[implementation decisions](docs/DECISIONS.md).
+[implementation decisions](docs/DECISIONS.md). Planned Research Infrastructure,
+visualization, and deployment work is tracked in the public
+[roadmap](ROADMAP.md).
 
 ## Install and see it work
 

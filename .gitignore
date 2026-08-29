@@ -13,3 +13,6 @@
 *.db-wal
 .env
 node_modules/
+
+# Local Superpowers execution plans
+/docs/superpowers/
