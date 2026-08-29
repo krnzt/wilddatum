@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, path::PathBuf, process::Command};
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use ecoscope_core::{
     DatasetId, ProfileTrajectoryRecipeV1, ProfileValueSpec, VerticalAxisSpec, VerticalDirection,
 };
@@ -109,35 +109,7 @@ enum Commands {
         blue_band: Option<u32>,
     },
     /// Configure a validated linked trajectory map and vertical profile.
-    ConfigureProfileTrajectory {
-        view_id: String,
-        #[arg(long, default_value = "layer_1")]
-        layer_id: String,
-        #[arg(long)]
-        trajectory_id_field: String,
-        #[arg(long)]
-        profile_id_field: String,
-        #[arg(long)]
-        time_field: Option<String>,
-        #[arg(long)]
-        latitude_field: String,
-        #[arg(long)]
-        longitude_field: String,
-        #[arg(long)]
-        vertical_field: String,
-        #[arg(long, value_enum)]
-        vertical_direction: VerticalDirectionArg,
-        #[arg(long)]
-        vertical_unit: Option<String>,
-        #[arg(long)]
-        value_field: String,
-        #[arg(long)]
-        value_unit: Option<String>,
-        #[arg(long)]
-        qc_field: Option<String>,
-        #[arg(long = "accept-qc")]
-        accepted_qc: Vec<String>,
-    },
+    ConfigureProfileTrajectory(Box<ConfigureProfileTrajectoryArgs>),
     /// Generate a Rerun recording from a semantic view.
     Render {
         view_id: String,
@@ -199,6 +171,41 @@ enum McpHost {
 enum VerticalDirectionArg {
     PositiveDown,
     PositiveUp,
+}
+
+#[derive(Debug, Args)]
+struct ConfigureProfileTrajectoryArgs {
+    view_id: String,
+    #[arg(long, default_value = "layer_1")]
+    layer_id: String,
+    #[arg(long)]
+    trajectory_id_field: String,
+    #[arg(long)]
+    profile_id_field: String,
+    #[arg(long)]
+    time_field: Option<String>,
+    #[arg(long)]
+    latitude_field: String,
+    #[arg(long)]
+    longitude_field: String,
+    #[arg(long)]
+    vertical_field: String,
+    #[arg(long, value_enum)]
+    vertical_direction: VerticalDirectionArg,
+    #[arg(long)]
+    vertical_unit: Option<String>,
+    #[arg(long = "vertical-fill-value")]
+    vertical_fill_values: Vec<String>,
+    #[arg(long)]
+    value_field: String,
+    #[arg(long)]
+    value_unit: Option<String>,
+    #[arg(long)]
+    qc_field: Option<String>,
+    #[arg(long = "accept-qc")]
+    accepted_qc: Vec<String>,
+    #[arg(long = "value-fill-value")]
+    value_fill_values: Vec<String>,
 }
 
 impl From<VerticalDirectionArg> for VerticalDirection {
@@ -342,22 +349,25 @@ async fn main() -> Result<()> {
                 service.configure_layer_encoding(&view_id, view.revision, &layer_id, encoding)?;
             print_json(&configured)?;
         }
-        Commands::ConfigureProfileTrajectory {
-            view_id,
-            layer_id,
-            trajectory_id_field,
-            profile_id_field,
-            time_field,
-            latitude_field,
-            longitude_field,
-            vertical_field,
-            vertical_direction,
-            vertical_unit,
-            value_field,
-            value_unit,
-            qc_field,
-            accepted_qc,
-        } => {
+        Commands::ConfigureProfileTrajectory(options) => {
+            let ConfigureProfileTrajectoryArgs {
+                view_id,
+                layer_id,
+                trajectory_id_field,
+                profile_id_field,
+                time_field,
+                latitude_field,
+                longitude_field,
+                vertical_field,
+                vertical_direction,
+                vertical_unit,
+                vertical_fill_values,
+                value_field,
+                value_unit,
+                qc_field,
+                accepted_qc,
+                value_fill_values,
+            } = *options;
             let view = service.get_view(&view_id)?;
             let configured = service.configure_profile_trajectory_view(
                 &view_id,
@@ -373,12 +383,14 @@ async fn main() -> Result<()> {
                         field: vertical_field,
                         direction: vertical_direction.into(),
                         unit: vertical_unit,
+                        fill_values: vertical_fill_values,
                     },
                     value: ProfileValueSpec {
                         field: value_field,
                         unit: value_unit,
                         qc_field,
                         accepted_qc,
+                        fill_values: value_fill_values,
                     },
                 },
             )?;
@@ -728,14 +740,14 @@ mod tests {
             "2",
         ])
         .unwrap();
-        let Commands::ConfigureProfileTrajectory {
+        let Commands::ConfigureProfileTrajectory(options) = cli.command else {
+            panic!("wrong command parsed");
+        };
+        let ConfigureProfileTrajectoryArgs {
             accepted_qc,
             vertical_direction,
             ..
-        } = cli.command
-        else {
-            panic!("wrong command parsed");
-        };
+        } = *options;
         assert_eq!(accepted_qc, ["1", "2"]);
         assert!(matches!(
             vertical_direction,

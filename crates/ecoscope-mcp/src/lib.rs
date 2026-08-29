@@ -342,11 +342,15 @@ pub struct ConfigureProfileTrajectoryInput {
     pub vertical_field: String,
     pub vertical_direction: VerticalDirection,
     pub vertical_unit: Option<String>,
+    #[serde(default)]
+    pub vertical_fill_values: Vec<String>,
     pub value_field: String,
     pub value_unit: Option<String>,
     pub qc_field: Option<String>,
     #[serde(default)]
     pub accepted_qc: Vec<String>,
+    #[serde(default)]
+    pub value_fill_values: Vec<String>,
 }
 
 fn default_y_axis() -> u32 {
@@ -908,12 +912,14 @@ impl EcoScopeMcp {
                 field: input.vertical_field,
                 direction: input.vertical_direction,
                 unit: input.vertical_unit,
+                fill_values: input.vertical_fill_values,
             },
             value: ProfileValueSpec {
                 field: input.value_field,
                 unit: input.value_unit,
                 qc_field: input.qc_field,
                 accepted_qc: input.accepted_qc,
+                fill_values: input.value_fill_values,
             },
         };
         match self.service.configure_profile_trajectory_view(

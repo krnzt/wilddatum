@@ -114,19 +114,28 @@ fn validate_delimited_recipe(
             .expect("configured header validated above")
     };
     let numeric_fields = [
-        ("latitude", position(&recipe.latitude_field)),
-        ("longitude", position(&recipe.longitude_field)),
-        ("vertical", position(&recipe.vertical.field)),
-        ("value", position(&recipe.value.field)),
+        ("latitude", position(&recipe.latitude_field), &[][..]),
+        ("longitude", position(&recipe.longitude_field), &[][..]),
+        (
+            "vertical",
+            position(&recipe.vertical.field),
+            recipe.vertical.fill_values.as_slice(),
+        ),
+        (
+            "value",
+            position(&recipe.value.field),
+            recipe.value.fill_values.as_slice(),
+        ),
     ];
     let mut found_numeric = [false; 4];
     for record in reader.records() {
         let record = record.map_err(csv_error)?;
-        for (slot, (_, column)) in numeric_fields.iter().enumerate() {
+        for (slot, (_, column, fill_values)) in numeric_fields.iter().enumerate() {
             found_numeric[slot] |= record
                 .get(*column)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
+                .filter(|value| !fill_values.iter().any(|fill| fill.trim() == *value))
                 .and_then(|value| value.parse::<f64>().ok())
                 .is_some_and(f64::is_finite);
         }
@@ -137,7 +146,7 @@ fn validate_delimited_recipe(
     let invalid = numeric_fields
         .iter()
         .zip(found_numeric)
-        .filter_map(|((role, _), found)| (!found).then_some(*role))
+        .filter_map(|((role, _, _), found)| (!found).then_some(*role))
         .collect::<Vec<_>>();
     if !invalid.is_empty() {
         return Err(EcoScopeError::Invalid(format!(
@@ -186,12 +195,14 @@ mod tests {
                 field: "pressure".into(),
                 direction: VerticalDirection::PositiveDown,
                 unit: Some("decibar".into()),
+                fill_values: vec![],
             },
             value: ProfileValueSpec {
                 field: "temperature".into(),
                 unit: Some("degree_Celsius".into()),
                 qc_field: Some("temperature_qc".into()),
                 accepted_qc: vec!["1".into(), "2".into()],
+                fill_values: vec![],
             },
         }
     }

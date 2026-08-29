@@ -24,6 +24,9 @@ pub struct VerticalAxisSpec {
     pub field: String,
     pub direction: VerticalDirection,
     pub unit: Option<String>,
+    /// Provider-native textual sentinel values, compared before numeric parsing.
+    #[serde(default)]
+    pub fill_values: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -33,6 +36,9 @@ pub struct ProfileValueSpec {
     pub qc_field: Option<String>,
     #[serde(default)]
     pub accepted_qc: Vec<String>,
+    /// Provider-native textual sentinel values, compared before numeric parsing.
+    #[serde(default)]
+    pub fill_values: Vec<String>,
 }
 
 /// User-controlled scientific semantics for a linked trajectory/profile view.
@@ -109,12 +115,14 @@ mod tests {
                 field: "pressure".into(),
                 direction: VerticalDirection::PositiveDown,
                 unit: Some("decibar".into()),
+                fill_values: vec!["-9999".into()],
             },
             value: ProfileValueSpec {
                 field: "temperature".into(),
                 unit: Some("degree_Celsius".into()),
                 qc_field: Some("temperature_qc".into()),
                 accepted_qc: vec!["1".into(), "2".into()],
+                fill_values: vec!["-9999".into()],
             },
         };
         let encoding = recipe.encoding();

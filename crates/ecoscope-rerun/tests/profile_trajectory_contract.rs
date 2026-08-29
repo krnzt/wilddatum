@@ -1,44 +1,36 @@
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
-use ecoscope_core::DatasetId;
+use ecoscope_core::{
+    DatasetId, ProfileTrajectoryRecipeV1, ProfileValueSpec, VerticalAxisSpec, VerticalDirection,
+};
 use ecoscope_service::{EcoScopeService, ServicePaths};
-use serde_json::{Value, json};
+use serde_json::json;
 
 fn fixture() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profile_trajectory.csv")
 }
 
-fn encoding() -> BTreeMap<String, Value> {
-    BTreeMap::from([
-        ("view_kind".into(), json!("profile_trajectory_v1")),
-        ("trajectory_id_field".into(), json!("platform_number")),
-        ("profile_id_field".into(), json!("cycle_number")),
-        ("time_field".into(), json!("time")),
-        ("latitude_field".into(), json!("latitude")),
-        ("longitude_field".into(), json!("longitude")),
-        (
-            "vertical".into(),
-            json!({"field": "pres", "direction": "positive_down", "unit": "decibar"}),
-        ),
-        (
-            "value".into(),
-            json!({
-                "field": "temp_adjusted",
-                "unit": "degree_Celsius",
-                "qc_field": "temp_adjusted_qc",
-                "accepted_qc": ["1", "2"]
-            }),
-        ),
-        (
-            "selection_mapping".into(),
-            json!({
-                "kind": "source_row_index",
-                "entity_suffixes": ["map_observations", "profile_observations"],
-                "stride": 1,
-                "rerun_version": ecoscope_core::PINNED_RERUN_VERSION
-            }),
-        ),
-    ])
+fn recipe() -> ProfileTrajectoryRecipeV1 {
+    ProfileTrajectoryRecipeV1 {
+        trajectory_id_field: "platform_number".into(),
+        profile_id_field: "cycle_number".into(),
+        time_field: Some("time".into()),
+        latitude_field: "latitude".into(),
+        longitude_field: "longitude".into(),
+        vertical: VerticalAxisSpec {
+            field: "pres".into(),
+            direction: VerticalDirection::PositiveDown,
+            unit: Some("decibar".into()),
+            fill_values: vec![],
+        },
+        value: ProfileValueSpec {
+            field: "temp_adjusted".into(),
+            unit: Some("degree_Celsius".into()),
+            qc_field: Some("temp_adjusted_qc".into()),
+            accepted_qc: vec!["1".into(), "2".into()],
+            fill_values: vec![],
+        },
+    }
 }
 
 #[tokio::test]
@@ -50,15 +42,15 @@ async fn writes_native_map_and_profile_recording() {
     ))
     .unwrap();
     let manifest = service.import_local_file(&fixture()).await.unwrap();
-    let mut view = service
+    let view = service
         .create_view(
             "Synthetic profile and trajectory".into(),
             vec![DatasetId(manifest.dataset_id.0.clone())],
         )
         .unwrap();
-    view.layers[0].encoding = encoding();
-    view.revision += 1;
-    service.save_view(&view).unwrap();
+    let view = service
+        .configure_profile_trajectory_view(&view.view_id.0, 1, "layer_1", recipe())
+        .unwrap();
 
     let recording = directory.path().join("profile-trajectory.rrd");
     ecoscope_rerun::write_recording(&service, &view.view_id.0, &recording).unwrap();
@@ -77,4 +69,39 @@ async fn writes_native_map_and_profile_recording() {
             String::from_utf8_lossy(entity)
         );
     }
+}
+
+#[tokio::test]
+async fn invalid_recipe_logs_an_adapter_notice_instead_of_crashing() {
+    let directory = tempfile::tempdir().unwrap();
+    let service = EcoScopeService::open(ServicePaths::under(
+        directory.path().join("data"),
+        directory.path().join("cache"),
+    ))
+    .unwrap();
+    let manifest = service.import_local_file(&fixture()).await.unwrap();
+    let view = service
+        .create_view("Invalid recipe".into(), vec![manifest.dataset_id])
+        .unwrap();
+    let configured = service
+        .configure_profile_trajectory_view(&view.view_id.0, 1, "layer_1", recipe())
+        .unwrap();
+    let mut invalid = configured.clone();
+    invalid.layers[0].encoding.get_mut("vertical").unwrap()["direction"] = json!("sideways");
+    invalid.revision += 1;
+    service.save_view(&invalid).unwrap();
+
+    let recording = directory.path().join("invalid-profile-trajectory.rrd");
+    ecoscope_rerun::write_recording(&service, &invalid.view_id.0, &recording).unwrap();
+    let bytes = std::fs::read(recording).unwrap();
+    assert!(
+        bytes
+            .windows(b"adapter_notice".len())
+            .any(|window| window == b"adapter_notice")
+    );
+    assert!(
+        bytes
+            .windows(b"sideways".len())
+            .any(|window| window == b"sideways")
+    );
 }

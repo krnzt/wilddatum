@@ -147,12 +147,14 @@ pub async fn profile_trajectory(service: &EcoScopeService) -> Result<DemoResult>
                 field: "pres".into(),
                 direction: VerticalDirection::PositiveDown,
                 unit: Some("decibar".into()),
+                fill_values: vec![],
             },
             value: ProfileValueSpec {
                 field: "temp_adjusted".into(),
                 unit: Some("degree_Celsius".into()),
                 qc_field: Some("temp_adjusted_qc".into()),
                 accepted_qc: vec!["1".into(), "2".into()],
+                fill_values: vec![],
             },
         },
     )?;
