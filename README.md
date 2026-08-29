@@ -77,12 +77,14 @@ or materialized dataset without exposing its private path:
 wilddatum inventory ds_...
 wilddatum suggest-views ds_lidar... ds_cube...
 wilddatum create-suggested-view suggest_... ds_lidar... ds_cube...
+wilddatum resolve-selection-links sel_...
 ```
 
 The equivalent registered MCP tools are `inspect_scientific_inventory` and
 `suggest_views`; `create_view_from_suggestion` accepts one of those opaque
-suggestion IDs. Inventories contain bounded fields, arrays, axes, units, CF/QC
-relationships, evidence, and unresolved decisions. Suggestions remain
+suggestion IDs, and `resolve_selection_links` evaluates applicable rules after
+a human selection. Inventories contain bounded fields, arrays, axes, units,
+CF/QC relationships, evidence, and unresolved decisions. Suggestions remain
 deterministic and side-effect free until accepted. On acceptance WildDatum
 recomputes the suggestion, rejects client-invented IDs, and persists an
 `EcoViewSpec` v2 with explicit scientific panels, encodings, and versioned link
@@ -97,8 +99,12 @@ treated as registration.
 
 Accepted point-cloud + spectral-cube views render through the same pinned Rerun
 adapter and browser explorer as manually created views. The browser reports the
-view-spec version and panel/link counts, while unavailable link rules remain
-visible structured state rather than becoming guessed interactions.
+view-spec version and panel/link counts. A cube-pixel pick automatically
+materializes its exact wavelength-aware spectrum as a durable result with the
+selection and link rule in its provenance. Unavailable link rules remain
+visible structured state and create no result rather than becoming guessed
+interactions. Link evaluation refuses stale selections after the view revision
+changes.
 
 Detailed support and caveats are in the [format matrix](docs/FORMATS.md). Design
 boundaries are documented in [architecture](docs/ARCHITECTURE.md) and

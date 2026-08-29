@@ -51,8 +51,10 @@ Alpha.3 deepens the human-agent visualization loop before adding another RI.
 - [x] Add backward-compatible `EcoViewSpec` v2 panels and versioned link rules.
 - [x] Recompute and compile an accepted suggestion into a durable view through
   the normal MCP and CLI, then render its supported layers through Rerun.
-- [ ] Evaluate enabled link rules and highlight derived selections with
-  exactness and provenance in Rerun and the browser explorer.
+- [x] Evaluate exact cube-pixel → spectrum rules into durable provenance-linked
+  results through MCP, CLI, and the browser; unavailable rules never execute.
+- [ ] Highlight derived selections and result series inside Rerun panels while
+  preserving exactness and provenance in the browser explorer.
 - [ ] Extract LAS CRS plus NEON HDF5 map/affine metadata and implement the exact
   point-return → image-pixel → spectrum workflow.
 - [ ] Extend profile/trajectory views to multiple values, Parquet/Arrow source

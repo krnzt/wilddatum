@@ -76,6 +76,15 @@ suggestion ID. A v2 RGB panel also configures the underlying spectral layer for
 the existing Rerun renderer. Missing v2 fields use empty defaults so persisted
 v1 views continue to deserialize and render.
 
+`resolve_selection_links` evaluates only rules that match the durable source
+selection and the source panel's dataset. The first executable resolver is the
+exact cube-pixel → spectrum mapping. Its query result stores the source
+selection and link rule as provenance, and the browser presents the bounded
+spectrum preview after a real Rerun pick. Rules marked `unavailable` are
+returned as structured state without executing a query. Unknown resolvers,
+non-exact executable rules, mismatched arrays, and selections recorded against
+an older view revision fail closed.
+
 The first multimodal recipe combines point-cloud, wavelength-aware RGB, and
 spectrum panels. RGB bands are selected from inspected wavelength coordinates,
 not institution-specific indices. Cube-pixel-to-spectrum can be exact from

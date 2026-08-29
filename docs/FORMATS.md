@@ -10,9 +10,12 @@ semantics without returning full arrays or private paths. `wilddatum
 suggest-views` / `suggest_views` use the same bounded inventory to propose
 evidence-backed panels and links. `wilddatum create-suggested-view` /
 `create_view_from_suggestion` recompute and persist a chosen suggestion as an
-`EcoViewSpec` v2. An unresolved CRS, affine transform, QC policy, axis, or
-wavelength choice remains explicit rather than becoming a guessed rendering
-contract or enabled link.
+`EcoViewSpec` v2. `wilddatum resolve-selection-links` /
+`resolve_selection_links` currently executes the exact cube-pixel → spectrum
+resolver and returns bounded wavelength/value rows plus a durable result handle.
+An unresolved CRS, affine transform, QC policy, axis, or wavelength choice
+remains explicit rather than becoming a guessed rendering contract or enabled
+link.
 
 | Source | Inspect/import | Scientific query | Rerun rendering | Important bounds or caveats |
 |---|---:|---:|---:|---|
