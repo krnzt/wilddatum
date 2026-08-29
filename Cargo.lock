@@ -2360,6 +2360,7 @@ dependencies = [
  "chrono",
  "ecoscope-core",
  "ecoscope-provider-api",
+ "ecoscope-provider-erddap",
  "ecoscope-provider-neon",
  "ecoscope-provider-process",
  "ecoscope-rerun",

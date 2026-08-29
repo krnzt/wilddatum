@@ -599,6 +599,17 @@ impl EcologicalDataProvider for ErddapProvider {
         self.materialize_with_control(plan, || false, |_, _| {})
             .await
     }
+
+    async fn materialize_controlled(
+        &self,
+        plan: DatasetPlan,
+        _credentials: Option<CredentialRef>,
+        should_cancel: &(dyn Fn() -> bool + Send + Sync),
+        on_progress: &(dyn Fn(usize, usize) + Send + Sync),
+    ) -> Result<DatasetManifest> {
+        self.materialize_with_control(plan, should_cancel, on_progress)
+            .await
+    }
 }
 
 fn modalities(cdm_data_type: &str) -> Vec<Modality> {

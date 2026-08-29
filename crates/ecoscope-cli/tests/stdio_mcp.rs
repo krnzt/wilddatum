@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{process::Command, time::Duration};
 
 use rmcp::{
     ServiceExt,
@@ -42,10 +42,11 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
             command
                 .env("ECOSCOPE_DATA_DIR", &data_dir)
                 .env("ECOSCOPE_CACHE_DIR", &cache_dir)
+                .env("NEON_API_TOKEN", "stdio-smoke-test-token")
                 .arg("mcp");
         },
     ))?;
-    let client = SmokeClient.serve(transport).await?;
+    let mut client = SmokeClient.serve(transport).await?;
     let tools = client.list_all_tools().await?;
     anyhow::ensure!(tools.iter().any(|tool| tool.name == "inspect_view"));
     let plan_tool = tools
@@ -74,6 +75,36 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
         .call_tool(CallToolRequestParams::new("health"))
         .await?;
     anyhow::ensure!(health.is_error != Some(true));
+    let listed = client
+        .call_tool(CallToolRequestParams::new("list_providers"))
+        .await?;
+    let providers = listed
+        .structured_content
+        .as_ref()
+        .and_then(|value| value.get("providers"))
+        .and_then(Value::as_array)
+        .expect("provider list");
+    for provider_id in ["emso", "icos-erddap", "euro-argo"] {
+        let provider = providers
+            .iter()
+            .find(|provider| provider["provider_id"] == provider_id)
+            .unwrap_or_else(|| panic!("missing built-in provider {provider_id}"));
+        for capability in [
+            "catalog_search",
+            "resource_resolve",
+            "asset_plan",
+            "asset_fetch",
+            "citation_resolve",
+            "policy_evaluate",
+        ] {
+            anyhow::ensure!(
+                provider["capabilities"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item == capability)),
+                "{provider_id} is missing {capability}"
+            );
+        }
+    }
     let inspected = client
         .call_tool(
             CallToolRequestParams::new("inspect_view")
@@ -137,6 +168,7 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
             == Some(16)
     );
 
-    client.cancel().await?;
+    let shutdown = client.close_with_timeout(Duration::from_secs(15)).await?;
+    anyhow::ensure!(shutdown.is_some(), "MCP child did not shut down within 15s");
     Ok(())
 }

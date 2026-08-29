@@ -9,6 +9,7 @@ use ecoscope_core::{
     ProviderManifest, ProviderStatus, ResourceQuery, ResultId, SemanticSelection,
 };
 use ecoscope_provider_api::{EcologicalDataProvider, PROVIDER_PROTOCOL_VERSION, validate_manifest};
+use ecoscope_provider_erddap::{ErddapProvider, config as erddap_config};
 use ecoscope_provider_neon::NeonProvider;
 use ecoscope_provider_process::{ProcessProvider, discover_configs, find_config};
 use ecoscope_service::EcoScopeService;
@@ -25,6 +26,68 @@ use serde_json::{Value, json};
 const KEYRING_SERVICE: &str = "org.ecoscope.EcoScope";
 const KEYRING_NEON_USER: &str = "neon-api-token";
 
+pub fn built_in_provider_manifests() -> std::result::Result<Vec<ProviderManifest>, EcoScopeError> {
+    let neon = NeonProvider::new(None)?.manifest();
+    let local = ProviderManifest {
+        schema_version: PROVIDER_PROTOCOL_VERSION,
+        provider_id: "local".into(),
+        name: "Local scientific files".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        status: ProviderStatus::BuiltIn,
+        capabilities: vec![
+            ProviderCapability::ResourceResolve,
+            ProviderCapability::AssetFetch,
+            ProviderCapability::ObservationsQuery,
+            ProviderCapability::SpatialSearch,
+            ProviderCapability::PolicyEvaluate,
+        ],
+        allowed_network_origins: vec![],
+        authentication: vec!["operating_system_file_access".into()],
+        standards: vec![
+            "Arrow".into(),
+            "Parquet".into(),
+            "GeoJSON".into(),
+            "GeoTIFF".into(),
+            "HDF5".into(),
+            "NetCDF".into(),
+            "Zarr".into(),
+            "LAS/LAZ/COPC".into(),
+        ],
+        homepage: None,
+        support_url: None,
+    };
+    let mut manifests = vec![neon, local];
+    for preset in erddap_config::presets() {
+        manifests.push(ErddapProvider::new((*preset).into())?.manifest());
+    }
+    for manifest in &manifests {
+        validate_manifest(manifest)?;
+    }
+    Ok(manifests)
+}
+
+async fn routed_provider(
+    service: &EcoScopeService,
+    provider_id: &str,
+    neon_token: Option<String>,
+) -> std::result::Result<Box<dyn EcologicalDataProvider>, EcoScopeError> {
+    if provider_id.eq_ignore_ascii_case("neon") {
+        return Ok(Box::new(NeonProvider::new(neon_token)?.with_object_dir(
+            service.paths().provider_objects_dir(&ProviderKind::Neon),
+        )));
+    }
+    let normalized = provider_id.to_ascii_lowercase();
+    if let Some(preset) = erddap_config::preset(&normalized) {
+        let provider_kind = ProviderKind::Other(preset.provider_id.into());
+        return Ok(Box::new(
+            ErddapProvider::new(preset.into())?
+                .with_object_dir(service.paths().provider_objects_dir(&provider_kind)),
+        ));
+    }
+    let config = find_config(&service.paths().providers_dir, provider_id)?;
+    Ok(Box::new(ProcessProvider::spawn(config).await?))
+}
+
 #[derive(Clone)]
 pub struct EcoScopeMcp {
     service: EcoScopeService,
@@ -39,22 +102,15 @@ impl EcoScopeMcp {
         }
     }
 
-    fn neon(&self) -> Result<NeonProvider, EcoScopeError> {
-        NeonProvider::new(load_neon_token()).map(|provider| {
-            provider.with_object_dir(
-                self.service
-                    .paths()
-                    .provider_objects_dir(&ProviderKind::Neon),
-            )
-        })
-    }
-
-    async fn community_provider(
+    async fn provider(
         &self,
         provider_id: &str,
-    ) -> Result<ProcessProvider, EcoScopeError> {
-        let config = find_config(&self.service.paths().providers_dir, provider_id)?;
-        ProcessProvider::spawn(config).await
+    ) -> std::result::Result<Box<dyn EcologicalDataProvider>, EcoScopeError> {
+        let neon_token = provider_id
+            .eq_ignore_ascii_case("neon")
+            .then(load_neon_token)
+            .flatten();
+        routed_provider(&self.service, provider_id, neon_token).await
     }
 }
 
@@ -322,44 +378,10 @@ impl EcoScopeMcp {
 
     #[tool(description = "List ecological providers and their negotiated capabilities")]
     async fn list_providers(&self) -> CallToolResult {
-        let neon = match self.neon() {
-            Ok(provider) => provider.manifest(),
+        let mut providers = match built_in_provider_manifests() {
+            Ok(providers) => providers,
             Err(error) => return tool_error(error),
         };
-        let local = ProviderManifest {
-            schema_version: PROVIDER_PROTOCOL_VERSION,
-            provider_id: "local".into(),
-            name: "Local scientific files".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-            status: ProviderStatus::BuiltIn,
-            capabilities: vec![
-                ProviderCapability::ResourceResolve,
-                ProviderCapability::AssetFetch,
-                ProviderCapability::ObservationsQuery,
-                ProviderCapability::SpatialSearch,
-                ProviderCapability::PolicyEvaluate,
-            ],
-            allowed_network_origins: vec![],
-            authentication: vec!["operating_system_file_access".into()],
-            standards: vec![
-                "Arrow".into(),
-                "Parquet".into(),
-                "GeoJSON".into(),
-                "GeoTIFF".into(),
-                "HDF5".into(),
-                "NetCDF".into(),
-                "Zarr".into(),
-                "LAS/LAZ/COPC".into(),
-            ],
-            homepage: None,
-            support_url: None,
-        };
-        for manifest in [&neon, &local] {
-            if let Err(error) = validate_manifest(manifest) {
-                return tool_error(error);
-            }
-        }
-        let mut providers = vec![neon, local];
         let mut unavailable = Vec::new();
         let configs = match discover_configs(&self.service.paths().providers_dir) {
             Ok(configs) => configs,
@@ -399,18 +421,11 @@ impl EcoScopeMcp {
             provider_filters: BTreeMap::from([("sites".into(), json!(input.sites))]),
             limit: input.limit.min(100),
         };
-        let result = if input.provider.eq_ignore_ascii_case("neon") {
-            match self.neon() {
-                Ok(provider) => provider.search_resources(query).await,
-                Err(error) => return tool_error(error),
-            }
-        } else {
-            match self.community_provider(&input.provider).await {
-                Ok(provider) => provider.search_resources(query).await,
-                Err(error) => return tool_error(error),
-            }
+        let provider = match self.provider(&input.provider).await {
+            Ok(provider) => provider,
+            Err(error) => return tool_error(error),
         };
-        match result {
+        match provider.search_resources(query).await {
             Ok(entries) => bounded_result(json!({"resources": entries, "count": entries.len()})),
             Err(error) => tool_error(error),
         }
@@ -421,18 +436,11 @@ impl EcoScopeMcp {
         &self,
         Parameters(input): Parameters<InspectResourceInput>,
     ) -> CallToolResult {
-        let result = if input.provider.eq_ignore_ascii_case("neon") {
-            match self.neon() {
-                Ok(provider) => provider.resolve_resource(&input.resource_id).await,
-                Err(error) => return tool_error(error),
-            }
-        } else {
-            match self.community_provider(&input.provider).await {
-                Ok(provider) => provider.resolve_resource(&input.resource_id).await,
-                Err(error) => return tool_error(error),
-            }
+        let provider = match self.provider(&input.provider).await {
+            Ok(provider) => provider,
+            Err(error) => return tool_error(error),
         };
-        match result {
+        match provider.resolve_resource(&input.resource_id).await {
             Ok(resource) => bounded_serializable(resource),
             Err(error) => tool_error(error),
         }
@@ -445,7 +453,7 @@ impl EcoScopeMcp {
         &self,
         Parameters(input): Parameters<InspectProductInput>,
     ) -> CallToolResult {
-        let provider = match self.neon() {
+        let provider = match self.provider("neon").await {
             Ok(provider) => provider,
             Err(error) => return tool_error(error),
         };
@@ -502,18 +510,11 @@ impl EcoScopeMcp {
             include_provisional: input.include_provisional,
             provider_options: BTreeMap::new(),
         };
-        let result = if is_neon {
-            match self.neon() {
-                Ok(provider) => provider.plan_dataset(request).await,
-                Err(error) => return tool_error(error),
-            }
-        } else {
-            match self.community_provider(&provider_id).await {
-                Ok(provider) => provider.plan_dataset(request).await,
-                Err(error) => return tool_error(error),
-            }
+        let provider = match self.provider(&provider_id).await {
+            Ok(provider) => provider,
+            Err(error) => return tool_error(error),
         };
-        match result {
+        match provider.plan_dataset(request).await {
             Ok(plan) => {
                 if let Err(error) = self.service.save_plan(&plan) {
                     return tool_error(error);
@@ -555,18 +556,11 @@ impl EcoScopeMcp {
             include_provisional: input.include_provisional,
             provider_options: input.provider_options,
         };
-        let result = if is_neon {
-            match self.neon() {
-                Ok(provider) => provider.plan_dataset(request).await,
-                Err(error) => return tool_error(error),
-            }
-        } else {
-            match self.community_provider(&provider_id).await {
-                Ok(provider) => provider.plan_dataset(request).await,
-                Err(error) => return tool_error(error),
-            }
+        let provider = match self.provider(&provider_id).await {
+            Ok(provider) => provider,
+            Err(error) => return tool_error(error),
         };
-        match result {
+        match provider.plan_dataset(request).await {
             Ok(plan) => {
                 if let Err(error) = self.service.save_plan(&plan) {
                     return tool_error(error);
@@ -612,18 +606,25 @@ impl EcoScopeMcp {
                 "approve the plan before materialization".into(),
             ));
         }
-        let token = match &plan.request.provider {
+        let (provider_id, token, credentials) = match &plan.request.provider {
             ProviderKind::Neon => match load_neon_token() {
-                Some(token) => Some(token),
+                Some(token) => (
+                    "neon".to_owned(),
+                    Some(token),
+                    Some(CredentialRef("conn_neon_keychain".into())),
+                ),
                 None => {
                     return tool_error(EcoScopeError::CredentialsRequired("neon".into()));
                 }
             },
             ProviderKind::Other(provider_id) => {
-                if let Err(error) = find_config(&self.service.paths().providers_dir, provider_id) {
+                if erddap_config::preset(provider_id).is_none()
+                    && let Err(error) =
+                        find_config(&self.service.paths().providers_dir, provider_id)
+                {
                     return tool_error(error);
                 }
-                None
+                (provider_id.clone(), None, None)
             }
             ProviderKind::Local => {
                 return tool_error(EcoScopeError::Invalid(
@@ -649,54 +650,35 @@ impl EcoScopeMcp {
             running.updated_at = Utc::now();
             let _ = service.save_job(&running);
             let outcome: Result<_, EcoScopeError> = async {
-                match &plan.request.provider {
-                    ProviderKind::Neon => {
-                        let provider = NeonProvider::new(token).map(|provider| {
-                            provider.with_object_dir(
-                                service.paths().provider_objects_dir(&ProviderKind::Neon),
-                            )
-                        })?;
-                        let cancellation_service = service.clone();
-                        let cancellation_job_id = job_id.0.clone();
-                        let progress_service = service.clone();
-                        let progress_job_id = job_id.0.clone();
-                        provider
-                            .materialize_with_control(
-                                plan,
-                                Some(CredentialRef("conn_neon_keychain".into())),
-                                move || {
-                                    cancellation_service
-                                        .get_job(&cancellation_job_id)
-                                        .is_ok_and(|job| job.status == JobStatus::Cancelled)
-                                },
-                                move |completed, total| {
-                                    if let Ok(mut job) = progress_service.get_job(&progress_job_id)
-                                        && job.status != JobStatus::Cancelled
-                                    {
-                                        job.progress = if total == 0 {
-                                            1.0
-                                        } else {
-                                            completed as f32 / total as f32
-                                        };
-                                        job.message = Some(format!(
-                                            "Downloaded and verified {completed} of {total} files"
-                                        ));
-                                        job.updated_at = Utc::now();
-                                        let _ = progress_service.save_job(&job);
-                                    }
-                                },
-                            )
-                            .await
+                let provider = routed_provider(&service, &provider_id, token).await?;
+                let cancellation_service = service.clone();
+                let cancellation_job_id = job_id.0.clone();
+                let should_cancel = move || {
+                    cancellation_service
+                        .get_job(&cancellation_job_id)
+                        .is_ok_and(|job| job.status == JobStatus::Cancelled)
+                };
+                let progress_service = service.clone();
+                let progress_job_id = job_id.0.clone();
+                let on_progress = move |completed, total| {
+                    if let Ok(mut job) = progress_service.get_job(&progress_job_id)
+                        && job.status != JobStatus::Cancelled
+                    {
+                        job.progress = if total == 0 {
+                            1.0
+                        } else {
+                            completed as f32 / total as f32
+                        };
+                        job.message = Some(format!(
+                            "Downloaded and verified {completed} of {total} files"
+                        ));
+                        job.updated_at = Utc::now();
+                        let _ = progress_service.save_job(&job);
                     }
-                    ProviderKind::Other(provider_id) => {
-                        let config = find_config(&service.paths().providers_dir, provider_id)?;
-                        ProcessProvider::spawn(config)
-                            .await?
-                            .materialize(plan, None)
-                            .await
-                    }
-                    ProviderKind::Local => unreachable!("validated before spawning the job"),
-                }
+                };
+                provider
+                    .materialize_controlled(plan, credentials, &should_cancel, &on_progress)
+                    .await
             }
             .await;
             match outcome {
@@ -1327,6 +1309,11 @@ mod tests {
             directory.path().join("data"),
             directory.path().join("cache"),
         ))?;
+        let registry = EcoScopeMcp::new(service.clone());
+        for provider_id in ["emso", "icos-erddap", "euro-argo"] {
+            let provider = registry.provider(provider_id).await?;
+            assert_eq!(provider.provider_id(), provider_id);
+        }
         let table_path = directory.path().join("observations.csv");
         std::fs::write(&table_path, "site,value\nHARV,1\nHARV,3\nABBY,8\n")?;
         let dataset = service.import_local_file(&table_path).await?;
@@ -1387,15 +1374,37 @@ mod tests {
             .call_tool(CallToolRequestParams::new("list_providers"))
             .await?;
         assert_ne!(providers.is_error, Some(true));
+        let listed_providers = providers
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("providers"))
+            .and_then(Value::as_array)
+            .expect("provider list");
+        for provider_id in ["emso", "icos-erddap", "euro-argo"] {
+            let provider = listed_providers
+                .iter()
+                .find(|provider| provider["provider_id"] == provider_id)
+                .unwrap_or_else(|| panic!("missing built-in provider {provider_id}"));
+            for capability in [
+                "catalog_search",
+                "resource_resolve",
+                "asset_plan",
+                "asset_fetch",
+                "citation_resolve",
+                "policy_evaluate",
+            ] {
+                assert!(
+                    provider["capabilities"]
+                        .as_array()
+                        .is_some_and(|items| items.iter().any(|item| item == capability)),
+                    "{provider_id} is missing {capability}"
+                );
+            }
+        }
         assert!(
-            providers
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.get("providers"))
-                .and_then(Value::as_array)
-                .is_some_and(|providers| providers.iter().all(|provider| {
-                    provider.get("schema_version").and_then(Value::as_u64) == Some(2)
-                }))
+            listed_providers.iter().all(|provider| {
+                provider.get("schema_version").and_then(Value::as_u64) == Some(2)
+            })
         );
 
         let query = client

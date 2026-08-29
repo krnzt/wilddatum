@@ -95,6 +95,30 @@ pub trait EcologicalDataProvider: Send + Sync {
         plan: DatasetPlan,
         credentials: Option<CredentialRef>,
     ) -> Result<DatasetManifest>;
+
+    /// Built-in providers can override this to expose cooperative cancellation
+    /// and progress while remaining usable through a provider trait object.
+    async fn materialize_controlled(
+        &self,
+        plan: DatasetPlan,
+        credentials: Option<CredentialRef>,
+        should_cancel: &(dyn Fn() -> bool + Send + Sync),
+        on_progress: &(dyn Fn(usize, usize) + Send + Sync),
+    ) -> Result<DatasetManifest> {
+        if should_cancel() {
+            return Err(ecoscope_core::EcoScopeError::Conflict(
+                "materialization cancelled".into(),
+            ));
+        }
+        let manifest = self.materialize(plan, credentials).await?;
+        if should_cancel() {
+            return Err(ecoscope_core::EcoScopeError::Conflict(
+                "materialization cancelled".into(),
+            ));
+        }
+        on_progress(1, 1);
+        Ok(manifest)
+    }
 }
 
 #[cfg(test)]
