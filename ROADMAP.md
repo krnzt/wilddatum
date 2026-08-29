@@ -28,16 +28,16 @@ Rerun browser verification where visualization is involved.
 The next release line establishes one standards adapter that can serve several
 RIs instead of adding institution-specific MCP tools.
 
-- [ ] Migrate plans and manifests from NEON field names to a provider-neutral
+- [x] Migrate plans and manifests from NEON field names to a provider-neutral
   v2 contract, with read compatibility for existing alpha state.
-- [ ] Add a reusable public ERDDAP provider with bounded catalog search,
+- [x] Add a reusable public ERDDAP provider with bounded catalog search,
   metadata inspection, tabledap and griddap planning, streaming
   materialization, license, citation, and provenance capture.
-- [ ] Ship maintained presets for EMSO ERIC, the public ICOS ERDDAP surface,
+- [x] Ship maintained presets for EMSO ERIC, the public ICOS ERDDAP surface,
   and Euro-Argo/Argo data served by Ifremer.
 - [ ] Add linked trajectory-map and vertical-profile Rerun views with exact
   source-row selection and QC-aware configuration.
-- [ ] Add synthetic fixtures and opt-in live smoke tests for all three public
+- [x] Add synthetic fixtures and opt-in live smoke tests for all three public
   services; normal CI remains deterministic and offline.
 
 ## Following: authenticated ecological repositories
