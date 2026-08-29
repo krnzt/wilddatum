@@ -224,6 +224,12 @@ pub struct DatasetIdInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct SuggestViewsInput {
+    /// One to eight unique durable dataset handles. No file paths or URLs.
+    pub dataset_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct QueryDatasetInput {
     pub dataset_id: String,
     /// Scientific query. Omit for a backwards-compatible bounded preview.
@@ -836,6 +842,32 @@ impl WildDatumMcp {
     }
 
     #[tool(
+        description = "Inspect the bounded scientific roles, axes, units, QC relationships, and unresolved semantics of a materialized or local dataset"
+    )]
+    async fn inspect_scientific_inventory(
+        &self,
+        Parameters(input): Parameters<DatasetIdInput>,
+    ) -> CallToolResult {
+        match self.service.scientific_inventory(&input.dataset_id) {
+            Ok(inventory) => bounded_serializable(inventory),
+            Err(error) => tool_error(error),
+        }
+    }
+
+    #[tool(
+        description = "Rank bounded, evidence-backed scientific visualization suggestions for one to eight existing datasets without creating a view"
+    )]
+    async fn suggest_views(
+        &self,
+        Parameters(input): Parameters<SuggestViewsInput>,
+    ) -> CallToolResult {
+        match self.service.suggest_views(&input.dataset_ids) {
+            Ok(suggestions) => bounded_serializable(suggestions),
+            Err(error) => tool_error(error),
+        }
+    }
+
+    #[tool(
         description = "Run a bounded tabular, raster, hyperspectral, point-cloud, or vector query and return a durable result handle"
     )]
     async fn query_dataset(
@@ -1421,6 +1453,8 @@ mod tests {
             "plan_dataset",
             "plan_materialization",
             "materialize_dataset",
+            "inspect_scientific_inventory",
+            "suggest_views",
             "query_dataset",
             "inspect_result",
             "export_result",
@@ -1485,6 +1519,54 @@ mod tests {
             listed_providers.iter().all(|provider| {
                 provider.get("schema_version").and_then(Value::as_u64) == Some(2)
             })
+        );
+
+        let inventory = client
+            .call_tool(
+                CallToolRequestParams::new("inspect_scientific_inventory").with_arguments(
+                    json!({"dataset_id": dataset.dataset_id})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await?;
+        assert_ne!(inventory.is_error, Some(true));
+        assert_eq!(
+            inventory
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("version"))
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(
+            inventory
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("components"))
+                .and_then(Value::as_array)
+                .is_some_and(|components| !components.is_empty())
+        );
+
+        let suggestions = client
+            .call_tool(
+                CallToolRequestParams::new("suggest_views").with_arguments(
+                    json!({"dataset_ids": [dataset.dataset_id]})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await?;
+        assert_ne!(suggestions.is_error, Some(true));
+        assert!(
+            suggestions
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("suggestions"))
+                .and_then(Value::as_array)
+                .is_some_and(|suggestions| !suggestions.is_empty())
         );
 
         let query = client

@@ -53,6 +53,13 @@ enum Commands {
     Datasets,
     /// Print an immutable dataset manifest.
     Inspect { dataset_id: String },
+    /// Inspect inferred scientific roles, axes, units, and unresolved semantics.
+    Inventory { dataset_id: String },
+    /// Rank evidence-backed visualization suggestions without creating a view.
+    SuggestViews {
+        #[arg(required = true, num_args = 1..=8)]
+        dataset_ids: Vec<String>,
+    },
     /// Preview a local tabular dataset.
     Preview {
         dataset_id: String,
@@ -256,6 +263,12 @@ async fn main() -> Result<()> {
         Commands::Datasets => print_json(&service.list_manifests()?)?,
         Commands::Inspect { dataset_id } => {
             print_json(&service.get_manifest(&dataset_id)?)?;
+        }
+        Commands::Inventory { dataset_id } => {
+            print_json(&service.scientific_inventory(&dataset_id)?)?;
+        }
+        Commands::SuggestViews { dataset_ids } => {
+            print_json(&service.suggest_views(&dataset_ids)?)?;
         }
         Commands::Preview { dataset_id, limit } => {
             print_json(&service.preview_dataset(&dataset_id, limit.min(2_000))?)?;

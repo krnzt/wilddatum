@@ -35,7 +35,39 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
     );
     let demo: Value = serde_json::from_slice(&demo_output.stdout)?;
     let view_id = demo["view_id"].as_str().expect("view ID");
+    let point_dataset_id = demo["dataset_ids"][0].as_str().expect("point dataset ID");
     let cube_dataset_id = demo["dataset_ids"][1].as_str().expect("cube dataset ID");
+
+    let inventory_output = Command::new(executable)
+        .env("WILDDATUM_DATA_DIR", &data_dir)
+        .env("WILDDATUM_CACHE_DIR", &cache_dir)
+        .args(["inventory", cube_dataset_id])
+        .output()?;
+    anyhow::ensure!(inventory_output.status.success());
+    let inventory: Value = serde_json::from_slice(&inventory_output.stdout)?;
+    anyhow::ensure!(inventory["version"] == 1);
+    anyhow::ensure!(
+        !String::from_utf8_lossy(&inventory_output.stdout)
+            .contains(directory.path().to_string_lossy().as_ref()),
+        "scientific inventory exposed the private data directory"
+    );
+
+    let suggestion_output = Command::new(executable)
+        .env("WILDDATUM_DATA_DIR", &data_dir)
+        .env("WILDDATUM_CACHE_DIR", &cache_dir)
+        .args(["suggest-views", point_dataset_id, cube_dataset_id])
+        .output()?;
+    anyhow::ensure!(suggestion_output.status.success());
+    let suggestion: Value = serde_json::from_slice(&suggestion_output.stdout)?;
+    anyhow::ensure!(
+        suggestion["suggestions"]
+            .as_array()
+            .is_some_and(|suggestions| {
+                suggestions
+                    .iter()
+                    .any(|candidate| candidate["recipe"] == "point_cloud_spectral_cube_v1")
+            })
+    );
 
     let transport = TokioChildProcess::new(tokio::process::Command::new(executable).configure(
         |command| {
@@ -49,6 +81,12 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
     let mut client = SmokeClient.serve(transport).await?;
     let tools = client.list_all_tools().await?;
     anyhow::ensure!(tools.iter().any(|tool| tool.name == "inspect_view"));
+    anyhow::ensure!(
+        tools
+            .iter()
+            .any(|tool| tool.name == "inspect_scientific_inventory")
+    );
+    anyhow::ensure!(tools.iter().any(|tool| tool.name == "suggest_views"));
     let plan_tool = tools
         .iter()
         .find(|tool| tool.name == "plan_materialization")
@@ -112,6 +150,50 @@ async fn released_process_completes_demo_selection_loop_over_stdio() -> anyhow::
         )
         .await?;
     anyhow::ensure!(inspected.is_error != Some(true));
+
+    let inventory = client
+        .call_tool(
+            CallToolRequestParams::new("inspect_scientific_inventory").with_arguments(
+                json!({"dataset_id": cube_dataset_id})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await?;
+    anyhow::ensure!(inventory.is_error != Some(true));
+    anyhow::ensure!(
+        inventory
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("components"))
+            .and_then(Value::as_array)
+            .is_some_and(|components| !components.is_empty())
+    );
+
+    let suggestions = client
+        .call_tool(
+            CallToolRequestParams::new("suggest_views").with_arguments(
+                json!({"dataset_ids": demo["dataset_ids"]})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await?;
+    anyhow::ensure!(suggestions.is_error != Some(true));
+    anyhow::ensure!(
+        suggestions
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("suggestions"))
+            .and_then(Value::as_array)
+            .is_some_and(|suggestions| {
+                suggestions
+                    .iter()
+                    .any(|suggestion| suggestion["recipe"] == "point_cloud_spectral_cube_v1")
+            })
+    );
 
     let recorded = client
         .call_tool(

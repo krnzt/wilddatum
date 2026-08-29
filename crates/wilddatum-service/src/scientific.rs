@@ -40,7 +40,10 @@ impl WildDatumService {
 
         let mut components = Vec::new();
         append_provider_fields(&manifest, &mut components);
-        if let Some(inspection) = &local_inspection {
+        if let Some(inspection) = &local_inspection
+            && (manifest.modalities.contains(&Modality::Tabular)
+                || manifest.modalities.contains(&Modality::TimeSeries))
+        {
             append_local_fields(inspection, &mut components);
         }
         append_point_positions(&manifest, &mut components);
@@ -170,6 +173,10 @@ fn append_provider_fields(manifest: &DatasetManifest, components: &mut Vec<Scien
         return;
     };
     let mut names = variables.keys().collect::<Vec<_>>();
+    let materialized = materialized_field_names(manifest);
+    if !materialized.is_empty() {
+        names.retain(|name| materialized.contains(name.as_str()));
+    }
     names.sort();
     for name in names.into_iter().take(MAX_COMPONENTS) {
         let variable = &variables[name];
@@ -214,6 +221,24 @@ fn append_provider_fields(manifest: &DatasetManifest, components: &mut Vec<Scien
             evidence,
         });
     }
+}
+
+fn materialized_field_names(manifest: &DatasetManifest) -> BTreeSet<String> {
+    manifest
+        .source_files
+        .iter()
+        .filter_map(|source| source.metadata.get("decoded_query").and_then(Value::as_str))
+        .flat_map(|query| {
+            query
+                .split('&')
+                .next()
+                .unwrap_or_default()
+                .split(',')
+                .map(|field| field.split('[').next().unwrap_or(field).trim().to_owned())
+                .filter(|field| !field.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn append_local_fields(
