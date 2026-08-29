@@ -3,6 +3,8 @@
 //! Rerun recordings are derived visualization artifacts. EcoViewSpec and
 //! DatasetManifest remain the authoritative state.
 
+mod tabular;
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -13,8 +15,8 @@ use ecoscope_core::{
 };
 use ecoscope_service::EcoScopeService;
 use rerun::blueprint::{
-    Blueprint, BlueprintActivation, ContainerLike, Grid, Horizontal, Spatial2DView, Spatial3DView,
-    Tabs, TextDocumentView, TimeSeriesView, Vertical,
+    Blueprint, BlueprintActivation, ContainerLike, Grid, Horizontal, MapView, Spatial2DView,
+    Spatial3DView, Tabs, TextDocumentView, TimeSeriesView, Vertical,
 };
 use serde_json::Value;
 
@@ -27,7 +29,13 @@ pub use ecoscope_core::PINNED_RERUN_VERSION;
 struct BlueprintLayer {
     name: String,
     entity_root: String,
-    modality: Modality,
+    kind: BlueprintLayerKind,
+}
+
+#[derive(Debug)]
+enum BlueprintLayerKind {
+    Modality(Modality),
+    ProfileTrajectory { value_field: String },
 }
 
 pub fn write_recording(
@@ -58,10 +66,19 @@ pub fn write_recording(
     for layer in &view.layers {
         let manifest = service.get_manifest(&layer.dataset_id.0)?;
         let entity_root = format!("datasets/{}/{}", manifest.dataset_id, safe_name(&layer.id));
+        let is_profile_trajectory = tabular::is_profile_trajectory(&layer.encoding);
         blueprint_layers.push(BlueprintLayer {
             name: layer.name.clone(),
             entity_root: entity_root.clone(),
-            modality: layer.modality.clone(),
+            kind: if is_profile_trajectory {
+                BlueprintLayerKind::ProfileTrajectory {
+                    value_field: tabular::profile_value_field(&layer.encoding)
+                        .unwrap_or("value")
+                        .to_owned(),
+                }
+            } else {
+                BlueprintLayerKind::Modality(layer.modality.clone())
+            },
         });
         recording
             .log_static(
@@ -79,7 +96,26 @@ pub fn write_recording(
             .unwrap_or_default()
             .to_ascii_lowercase();
 
-        if matches!(
+        let original_name = manifest
+            .source_files
+            .first()
+            .map(|source| source.original_name.as_str())
+            .unwrap_or_default();
+
+        if is_profile_trajectory {
+            match source_path.and_then(|path| {
+                tabular::log_profile_trajectory(
+                    &recording,
+                    &entity_root,
+                    &path,
+                    original_name,
+                    &layer.encoding,
+                )
+            }) {
+                Ok(()) => {}
+                Err(error) => log_adapter_notice(&recording, &entity_root, error.to_string())?,
+            }
+        } else if matches!(
             extension.as_str(),
             "png" | "jpg" | "jpeg" | "webp" | "tif" | "tiff"
         ) {
@@ -142,7 +178,12 @@ pub fn write_recording(
         }
     }
 
-    send_blueprint(&recording, &view.layout, blueprint_layers)?;
+    send_blueprint(
+        &recording,
+        &view.layout,
+        blueprint_layers,
+        view.provenance_visible,
+    )?;
 
     recording.flush_blocking().map_err(rerun_error)?;
     Ok(output)
@@ -152,42 +193,66 @@ fn send_blueprint(
     recording: &rerun::RecordingStream,
     layout: &ViewLayout,
     layers: Vec<BlueprintLayer>,
+    provenance_visible: bool,
 ) -> Result<()> {
-    let mut contents = layers
-        .into_iter()
-        .map(|layer| {
-            let name = layer.name;
-            let root = layer.entity_root;
-            let contents = [format!("{root}/**")];
-            match layer.modality {
-                Modality::PointCloud => ContainerLike::from(
-                    Spatial3DView::new(name)
-                        .with_origin(root)
-                        .with_contents(contents),
-                ),
-                Modality::TimeSeries | Modality::Tabular => ContainerLike::from(
-                    TimeSeriesView::new(name)
-                        .with_origin(root)
-                        .with_contents(contents),
-                ),
-                Modality::Raster
-                | Modality::Hyperspectral
-                | Modality::Image
-                | Modality::Tensor
-                | Modality::Vector => ContainerLike::from(
-                    Spatial2DView::new(name)
-                        .with_origin(root)
-                        .with_contents(contents),
-                ),
-                Modality::Unknown => ContainerLike::from(
-                    TextDocumentView::new(name).with_origin(format!("{root}/adapter_notice")),
-                ),
+    let mut contents = Vec::new();
+    for layer in layers {
+        let name = layer.name;
+        let root = layer.entity_root;
+        match layer.kind {
+            BlueprintLayerKind::ProfileTrajectory { value_field } => {
+                let map = ContainerLike::from(
+                    MapView::new(format!("{name} map"))
+                        .with_origin(root.clone())
+                        .with_contents([
+                            format!("{root}/map_observations"),
+                            format!("{root}/trajectory_lines"),
+                        ]),
+                );
+                let profile = ContainerLike::from(
+                    Spatial2DView::new(format!("{value_field} profile"))
+                        .with_origin(root.clone())
+                        .with_contents([
+                            format!("{root}/profile_observations"),
+                            format!("{root}/profile_lines"),
+                        ]),
+                );
+                contents.push(ContainerLike::from(Horizontal::new([map, profile])));
             }
-        })
-        .collect::<Vec<_>>();
-    contents.push(ContainerLike::from(
-        TextDocumentView::new("EcoScope provenance").with_origin("ecoscope"),
-    ));
+            BlueprintLayerKind::Modality(modality) => {
+                let layer_contents = [format!("{root}/**")];
+                contents.push(match modality {
+                    Modality::PointCloud => ContainerLike::from(
+                        Spatial3DView::new(name)
+                            .with_origin(root)
+                            .with_contents(layer_contents),
+                    ),
+                    Modality::TimeSeries | Modality::Tabular => ContainerLike::from(
+                        TimeSeriesView::new(name)
+                            .with_origin(root)
+                            .with_contents(layer_contents),
+                    ),
+                    Modality::Raster
+                    | Modality::Hyperspectral
+                    | Modality::Image
+                    | Modality::Tensor
+                    | Modality::Vector => ContainerLike::from(
+                        Spatial2DView::new(name)
+                            .with_origin(root)
+                            .with_contents(layer_contents),
+                    ),
+                    Modality::Unknown => ContainerLike::from(
+                        TextDocumentView::new(name).with_origin(format!("{root}/adapter_notice")),
+                    ),
+                });
+            }
+        }
+    }
+    if provenance_visible {
+        contents.push(ContainerLike::from(
+            TextDocumentView::new("EcoScope provenance").with_origin("ecoscope"),
+        ));
+    }
 
     let root: ContainerLike = match layout {
         ViewLayout::Single | ViewLayout::Tabs => Tabs::new(contents).into(),

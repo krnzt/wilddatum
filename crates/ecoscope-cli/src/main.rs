@@ -154,6 +154,7 @@ enum Commands {
 enum DemoKind {
     Synthetic,
     Neon,
+    ProfileTrajectory,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -352,6 +353,7 @@ async fn main() -> Result<()> {
             let demo = match kind {
                 DemoKind::Synthetic => demo::synthetic(&service).await?,
                 DemoKind::Neon => demo::official_neon(&service, accept_download).await?,
+                DemoKind::ProfileTrajectory => demo::profile_trajectory(&service).await?,
             };
             print_json(&demo)?;
             if !no_open {

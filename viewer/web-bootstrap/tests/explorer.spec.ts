@@ -15,6 +15,7 @@ let stateRoot: string;
 let explorer: ChildProcessWithoutNullStreams;
 let explorerUrl: string;
 let pointViewId: string;
+let profileViewId: string;
 
 test.beforeAll(async () => {
   stateRoot = await mkdtemp(path.join(tmpdir(), "ecoscope-browser-smoke-"));
@@ -30,6 +31,12 @@ test.beforeAll(async () => {
     {env: environment, timeout: 30_000}
   );
   pointViewId = JSON.parse(pointView.stdout).view_id;
+  const profileDemo = await execute(
+    executable,
+    ["demo", "profile-trajectory", "--no-open"],
+    {env: environment, timeout: 90_000}
+  );
+  profileViewId = JSON.parse(profileDemo.stdout).view_id;
   explorerUrl = await startExplorer(demo.view_id);
 });
 
@@ -64,6 +71,39 @@ test("renders LiDAR and hyperspectral views and records real Rerun picks", async
   );
   expect(pointSelection.selection.spatial_query.source_index_verified).toBe(true);
   expect(pointSelection.selection.spatial_query.source_indices).toHaveLength(1);
+});
+
+test("profile trajectory contract exposes a real Rerun instance pick", async ({page}) => {
+  await stopExplorer();
+  explorerUrl = await startExplorer(profileViewId);
+  await page.goto(explorerUrl);
+  await loadRenderedExplorer(page);
+
+  const mapPick = await clickNearObservation(
+    page,
+    "map_observations",
+    0.595,
+    0.275,
+    15
+  );
+  expect(mapPick.item.instance_id).toBe(15);
+
+  const profilePick = await clickNearObservation(
+    page,
+    "profile_observations",
+    0.8,
+    0.63
+  );
+  expect(Number.isInteger(profilePick.item.instance_id)).toBe(true);
+  expect(profilePick.item.instance_id).toBeGreaterThanOrEqual(0);
+  expect(profilePick.item.instance_id).toBeLessThan(16);
+  await expect(page.locator("#viewer")).not.toContainText("Rerun has crashed");
+  if (process.env.ECOSCOPE_PROFILE_SCREENSHOT) {
+    await page.screenshot({
+      path: process.env.ECOSCOPE_PROFILE_SCREENSHOT,
+      fullPage: true
+    });
+  }
 });
 
 async function startExplorer(viewId: string): Promise<string> {
@@ -144,6 +184,45 @@ async function latestSelection(page: Page): Promise<any> {
     const response = await fetch(`/api/selection?token=${encodeURIComponent(token ?? "")}`);
     return response.json();
   });
+}
+
+async function clickNearObservation(
+  page: Page,
+  entitySuffix: "map_observations" | "profile_observations",
+  xFraction: number,
+  yFraction: number,
+  expectedInstance?: number
+): Promise<{
+  record: any;
+  item: {entity_path: string; instance_id: number};
+}> {
+  const canvas = page.locator("#viewer canvas");
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("Rerun canvas has no bounding box");
+  const offsets = [0, -5, 5, -10, 10, -15, 15];
+  for (const yOffset of offsets) {
+    for (const xOffset of offsets) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await page.mouse.click(
+          box.x + box.width * xFraction + xOffset,
+          box.y + box.height * yFraction + yOffset,
+          {delay: 80}
+        );
+        await page.waitForTimeout(250);
+        const record = await latestSelection(page);
+        const item = record?.summary?.raw_event?.items?.find((candidate: any) =>
+          candidate?.type === "entity" &&
+          String(candidate.entity_path).endsWith(`/${entitySuffix}`) &&
+          Number.isInteger(candidate.instance_id) &&
+          (expectedInstance === undefined || candidate.instance_id === expectedInstance)
+        );
+        if (item) return {record, item};
+      }
+    }
+  }
+  throw new Error(
+    `no ${entitySuffix} instance${expectedInstance === undefined ? "" : ` ${expectedInstance}`} was picked`
+  );
 }
 
 function demoEnvironment(): NodeJS.ProcessEnv {

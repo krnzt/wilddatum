@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+csv.workspace = true
 ecoscope-core = { path = "../ecoscope-core" }
 ecoscope-service = { path = "../ecoscope-service" }
 fixed.workspace = true

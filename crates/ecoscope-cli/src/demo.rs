@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, io::Read, path::Path};
 
 use anyhow::{Context, Result, bail};
-use ecoscope_core::DatasetManifest;
+use ecoscope_core::{DatasetManifest, ViewLayout};
 use ecoscope_service::EcoScopeService;
 use futures::StreamExt;
 use hdf5_metno as hdf5;
@@ -14,6 +14,9 @@ use tokio::io::AsyncWriteExt;
 
 const SYNTHETIC_LAS: &str = "ecoscope-canopy.las";
 const SYNTHETIC_HDF5: &str = "ecoscope-reflectance.h5";
+const PROFILE_TRAJECTORY_CSV: &str = "ecoscope-profile-trajectory.csv";
+const PROFILE_TRAJECTORY_FIXTURE: &str =
+    include_str!("../../ecoscope-rerun/tests/fixtures/profile_trajectory.csv");
 const NEON_LAS: RemoteFixture = RemoteFixture {
     filename: "neon-aop-teaching.las",
     url: "https://ndownloader.figshare.com/files/7024955",
@@ -113,6 +116,66 @@ pub async fn official_neon(service: &EcoScopeService, accept_download: bool) -> 
         },
     )
     .await
+}
+
+pub async fn profile_trajectory(service: &EcoScopeService) -> Result<DemoResult> {
+    let source_dir = service.paths().data_dir.join("demos/profile-trajectory-v1");
+    std::fs::create_dir_all(&source_dir)?;
+    let source_path = source_dir.join(PROFILE_TRAJECTORY_CSV);
+    if !source_path.is_file() {
+        std::fs::write(&source_path, PROFILE_TRAJECTORY_FIXTURE)?;
+    }
+    let manifest = import_or_reuse(service, &source_path).await?;
+    let mut view = service.create_view(
+        "EcoScope synthetic profile and trajectory".into(),
+        vec![manifest.dataset_id.clone()],
+    )?;
+    view.layers[0].encoding = BTreeMap::from([
+        ("view_kind".into(), json!("profile_trajectory_v1")),
+        ("trajectory_id_field".into(), json!("platform_number")),
+        ("profile_id_field".into(), json!("cycle_number")),
+        ("time_field".into(), json!("time")),
+        ("latitude_field".into(), json!("latitude")),
+        ("longitude_field".into(), json!("longitude")),
+        (
+            "vertical".into(),
+            json!({"field": "pres", "direction": "positive_down", "unit": "decibar"}),
+        ),
+        (
+            "value".into(),
+            json!({
+                "field": "temp_adjusted",
+                "unit": "degree_Celsius",
+                "qc_field": "temp_adjusted_qc",
+                "accepted_qc": ["1", "2"]
+            }),
+        ),
+        (
+            "selection_mapping".into(),
+            json!({
+                "kind": "source_row_index",
+                "entity_suffixes": ["map_observations", "profile_observations"],
+                "stride": 1,
+                "rerun_version": ecoscope_core::PINNED_RERUN_VERSION
+            }),
+        ),
+    ]);
+    view.layout = ViewLayout::Single;
+    view.provenance_visible = false;
+    view.revision += 1;
+    service.save_view(&view)?;
+    let recording = service
+        .paths()
+        .views_dir
+        .join(format!("{}.rrd", view.view_id));
+    ecoscope_rerun::write_recording(service, &view.view_id.0, &recording)?;
+    Ok(DemoResult {
+        kind: "profile_trajectory",
+        view_id: view.view_id.0,
+        dataset_ids: vec![manifest.dataset_id.0],
+        recording: recording.display().to_string(),
+        next: "Open the linked Rerun map/profile view and click an observation to prove the browser instance-selection contract.".into(),
+    })
 }
 
 async fn build_demo(

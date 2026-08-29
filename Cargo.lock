@@ -2461,6 +2461,7 @@ dependencies = [
 name = "ecoscope-rerun"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "csv",
  "ecoscope-core",
  "ecoscope-service",
  "fixed",
