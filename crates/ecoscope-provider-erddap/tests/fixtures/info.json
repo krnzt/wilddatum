@@ -1,0 +1,21 @@
+{
+  "table": {
+    "columnNames": ["Row Type", "Variable Name", "Attribute Name", "Data Type", "Value"],
+    "columnTypes": ["String", "String", "String", "String", "String"],
+    "columnUnits": [null, null, null, null, null],
+    "rows": [
+      ["attribute", "NC_GLOBAL", "cdm_data_type", "String", "TrajectoryProfile"],
+      ["attribute", "NC_GLOBAL", "license", "String", "CC BY 4.0"],
+      ["attribute", "NC_GLOBAL", "time_coverage_start", "String", "2025-01-01T00:00:00Z"],
+      ["attribute", "NC_GLOBAL", "time_coverage_end", "String", "2025-01-31T23:59:59Z"],
+      ["variable", "time", "", "double", ""],
+      ["attribute", "time", "units", "String", "seconds since 1970-01-01T00:00:00Z"],
+      ["variable", "pres", "", "float", ""],
+      ["attribute", "pres", "units", "String", "dbar"],
+      ["variable", "temp", "", "float", ""],
+      ["attribute", "temp", "units", "String", "degree_C"],
+      ["variable", "latitude", "", "double", ""],
+      ["variable", "longitude", "", "double", ""]
+    ]
+  }
+}

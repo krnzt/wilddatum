@@ -1,0 +1,16 @@
+{
+  "table": {
+    "columnNames": ["Dataset ID", "Institution", "griddap", "Title", "tabledap", "Summary", "Accessible"],
+    "columnTypes": ["String", "String", "String", "String", "String", "String", "String"],
+    "columnUnits": [null, null, null, null, null, null, null],
+    "rows": [[
+      "ArgoFloats",
+      "Argo",
+      "",
+      "Argo Float Measurements",
+      "https://example.test/erddap/tabledap/ArgoFloats",
+      "Public vertical profile measurements",
+      "public"
+    ]]
+  }
+}
