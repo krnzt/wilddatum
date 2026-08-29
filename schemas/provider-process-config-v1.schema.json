@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ecoscope.dev/schemas/provider-process-config-v1.schema.json",
-  "title": "EcoScope provider subprocess configuration v1",
+  "$id": "https://wilddatum.dev/schemas/provider-process-config-v1.schema.json",
+  "title": "WildDatum provider subprocess configuration v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "expected_provider_id", "command"],

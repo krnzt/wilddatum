@@ -15,7 +15,7 @@
 ## Runtime
 
 ```text
-MCP host ──stdio──> ecoscope mcp
+MCP host ──stdio──> wilddatum mcp
                        │
                        ├── SQLite/WAL state
                        ├── content-addressed objects
@@ -36,8 +36,8 @@ public interfaces when concurrent processing requirements justify it.
 
 ## Rerun boundary
 
-EcoScope pins Rerun 0.36 because RRD and deep viewer extension APIs evolve with
-Rerun releases. Only `ecoscope-rerun` may depend on Rerun. Upgrades must pass:
+WildDatum pins Rerun 0.36 because RRD and deep viewer extension APIs evolve with
+Rerun releases. Only `wilddatum-rerun` may depend on Rerun. Upgrades must pass:
 
 - RRD generation tests.
 - semantic event round trips.
@@ -48,9 +48,9 @@ The TypeScript browser package only boots the Rerun Wasm viewer and translates
 viewer positions through mappings already stored in `EcoViewSpec`. It does not
 invent scientific schemas, transforms, queries, or provenance.
 
-Rerun remains the rendering and interaction engine; EcoScope does not fork it
+Rerun remains the rendering and interaction engine; WildDatum does not fork it
 or build a replacement canvas. Native Rerun and the Rerun Web Viewer consume the
-same bounded RRD. EcoScope adds a side panel and loopback API so viewer events
+same bounded RRD. WildDatum adds a side panel and loopback API so viewer events
 become durable `SemanticSelection` records that an MCP agent can inspect and
 query.
 
@@ -59,12 +59,12 @@ The boundary is deliberately honest about what the viewer API exposes:
 - Entity/instance picks include an entity path, optional instance ID, and a
   viewer pick position. The position is not guaranteed to be the exact logged
   point component.
-- EcoScope-authored point batches record a sequential instance-to-source-stride
+- WildDatum-authored point batches record a sequential instance-to-source-stride
   mapping. The service recomputes and verifies that mapping against the pinned
   Rerun version before issuing an exact source-row query.
 - Image positions are mapped through the recorded preview stride to source
   cube pixels; the agent then reads the source array, not canvas colors.
-- Rerun does not currently provide EcoScope a universal brush/interval event
+- Rerun does not currently provide WildDatum a universal brush/interval event
   protocol across every view type. Explicit time, map, raster, spectral, and
   row selections can also enter through `record_selection`; those use the same
   durable state and `query_selection` path.
@@ -111,7 +111,7 @@ axes, and fill values without coupling Rerun to Argo or another institution.
 
 ## MCP profile workflow
 
-Local files enter out of band through `ecoscope import`; remote data use the
+Local files enter out of band through `wilddatum import`; remote data use the
 normal catalog, plan, approval, and materialization tools. From the resulting
 opaque dataset ID, every MCP host follows the same agent-native sequence:
 
@@ -157,7 +157,7 @@ manifest.
 
 This is an interoperability boundary, not an operating-system sandbox. Installing
 a provider executable is an explicit decision to run trusted local code.
-EcoScope clears its environment before launch and never passes credentials, but
+WildDatum clears its environment before launch and never passes credentials, but
 the executable still has the permissions of the user account. A future WASI or
 brokered remote runner can add stronger isolation without changing the JSON
 domain contract.

@@ -1,25 +1,25 @@
 {
   "manifest_version": "0.3",
-  "name": "ecoscope",
-  "display_name": "EcoScope",
+  "name": "wilddatum",
+  "display_name": "WildDatum",
   "version": "0.1.0-alpha.1",
   "description": "Discover, materialize, visualize, select, and cite ecological data",
   "long_description": "A local-first ecological data workbench for agents. NEON and user-selected local scientific files share reproducible manifests, semantic multimodal views, structured selections, and provenance-aware exports.",
   "author": {
-    "name": "EcoScope contributors"
+    "name": "WildDatum contributors"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/krnzt/ecoscope.git"
+    "url": "https://github.com/krnzt/wilddatum.git"
   },
-  "homepage": "https://github.com/krnzt/ecoscope",
-  "documentation": "https://github.com/krnzt/ecoscope#readme",
-  "support": "https://github.com/krnzt/ecoscope/issues",
+  "homepage": "https://github.com/krnzt/wilddatum",
+  "documentation": "https://github.com/krnzt/wilddatum#readme",
+  "support": "https://github.com/krnzt/wilddatum/issues",
   "server": {
     "type": "binary",
-    "entry_point": "server/ecoscope",
+    "entry_point": "server/wilddatum",
     "mcp_config": {
-      "command": "${__dirname}/server/ecoscope",
+      "command": "${__dirname}/server/wilddatum",
       "args": ["mcp"],
       "env": {}
     }

@@ -1,6 +1,6 @@
 # Provider SDK and subprocess protocol
 
-EcoScope's provider boundary is capability-based. Contributors describe what a
+WildDatum's provider boundary is capability-based. Contributors describe what a
 research infrastructure can do instead of reproducing NEON endpoints or adding
 a provider-specific MCP tool family.
 
@@ -15,7 +15,7 @@ extension ABI.
 ## Install and negotiate
 
 A local configuration identifies the expected provider and executable. Both the
-command and interpreted-script arguments should be absolute because EcoScope
+command and interpreted-script arguments should be absolute because WildDatum
 clears the subprocess environment, including `PATH`.
 
 ```json
@@ -35,24 +35,24 @@ The configuration schema is
 Install and inspect it with:
 
 ```bash
-ecoscope provider install ./my-ri.json
-ecoscope provider list
+wilddatum provider install ./my-ri.json
+wilddatum provider list
 ```
 
 Installation starts the executable, performs a handshake, validates its
 identity/capabilities/origins, then copies the configuration into the private
-EcoScope data directory. Replacement requires `--force`. `provider list`
+WildDatum data directory. Replacement requires `--force`. `provider list`
 renegotiates each installed executable and reports unavailable providers without
 hiding the healthy ones. The same negotiated providers appear from the MCP
 `list_providers` tool.
 
 ## Handshake and manifest
 
-EcoScope sends one JSON object per line and expects exactly one response line
+WildDatum sends one JSON object per line and expects exactly one response line
 with the same request ID:
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"provider.handshake","params":{"protocol_version":2,"client":"ecoscope","credential_transport":"none"}}
+{"jsonrpc":"2.0","id":1,"method":"provider.handshake","params":{"protocol_version":2,"client":"wilddatum","credential_transport":"none"}}
 ```
 
 The result is a manifest matching
@@ -108,12 +108,12 @@ A JSON-RPC error uses the standard shape:
 {"jsonrpc":"2.0","id":7,"error":{"code":-32601,"message":"method not found"}}
 ```
 
-EcoScope rejects invalid JSON, a mismatched version or request ID, a missing
+WildDatum rejects invalid JSON, a mismatched version or request ID, a missing
 result, responses over the configured byte limit, and calls exceeding the
 configured timeout. Calls on one provider process are serialized.
 
 The configuration file remains schema v1, but `protocol_version` is negotiated
-independently and must be 2. Protocol-v1 executables are not accepted. EcoScope
+independently and must be 2. Protocol-v1 executables are not accepted. WildDatum
 continues to read persisted alpha-era request, plan, source-file, and manifest
 JSON through explicit aliases; that storage compatibility does not make v1 a
 supported provider wire protocol.
@@ -140,7 +140,7 @@ and planning-only provider is valid and immediately useful.
 
 Planning must be deterministic and non-mutating. A provider returns file names,
 sizes, checksums, public download URLs, temporal/location information, warnings,
-and whether credentials are required. EcoScope finalizes the plan to create its
+and whether credentials are required. WildDatum finalizes the plan to create its
 stable BLAKE3 approval hash and rejects every planned URL outside the manifest's
 exact origin allowlist.
 
@@ -181,8 +181,8 @@ them.
 
 Community subprocess materialization is currently limited to public plans. The
 subprocess receives the approved plan but no credential values. If
-`requires_credentials` is true, EcoScope stops with an error. An authenticated
-community provider needs an EcoScope-owned credential broker so the model and
+`requires_credentials` is true, WildDatum stops with an error. An authenticated
+community provider needs an WildDatum-owned credential broker so the model and
 provider process receive only an opaque connection reference.
 
 A returned `DatasetManifest` must preserve source checksums, provider/release
@@ -199,7 +199,7 @@ The query model follows the official
 [tabledap](https://coastwatch.pfeg.noaa.gov/erddap/tabledap/documentation.html)
 and
 [griddap](https://coastwatch.pfeg.noaa.gov/erddap/griddap/documentation.html)
-contracts; EcoScope deliberately exposes a validated subset of each rather
+contracts; WildDatum deliberately exposes a validated subset of each rather
 than accepting arbitrary query fragments.
 
 | ID | Base URL | Optional catalog scope |
@@ -229,7 +229,7 @@ ERDDAP DAP expression and the decoded expression remains in the plan.
 
 Only the preset's exact HTTPS origin may receive the initial download request.
 Some federated services—notably EMSO—redirect a subset to a regional ERDDAP.
-EcoScope disables automatic HTTP redirects, probes the chain during planning,
+WildDatum disables automatic HTTP redirects, probes the chain during planning,
 requires every target to keep the exact subset path/query and use HTTPS, and
 stores the complete chain in the approval hash. Materialization follows only
 that approved chain and fails closed if any redirect changes. Loopback HTTP is
@@ -261,7 +261,7 @@ shared ERDDAP contract.
 Provider installation is an explicit decision to execute trusted local code.
 The subprocess protocol is not an OS sandbox.
 
-EcoScope does apply defense-in-depth:
+WildDatum does apply defense-in-depth:
 
 - absolute commands and an identity-checked handshake;
 - a cleared environment and no credential transport;
@@ -309,7 +309,7 @@ impl EcologicalDataProvider for MyInfrastructure {
 }
 ```
 
-The executable `ecoscope-provider-fixture` and its integration test form the v2
+The executable `wilddatum-provider-fixture` and its integration test form the v2
 wire-protocol conformance example. Provider tests should cover handshake
 validation, representative metadata, a dry-run plan, out-of-allowlist URL
 rejection, checksum failure, and one successful materialization without live

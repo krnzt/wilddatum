@@ -1,10 +1,10 @@
-# EcoScope
+# WildDatum
 
-[![CI](https://github.com/krnzt/ecoscope/actions/workflows/ci.yml/badge.svg)](https://github.com/krnzt/ecoscope/actions/workflows/ci.yml)
+[![CI](https://github.com/krnzt/wilddatum/actions/workflows/ci.yml/badge.svg)](https://github.com/krnzt/wilddatum/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status: public alpha](https://img.shields.io/badge/status-public_alpha-6cab70.svg)](#project-status)
 
-EcoScope is a local-first ecological data workbench exposed as a standard Model
+WildDatum is a local-first ecological data workbench exposed as a standard Model
 Context Protocol server. It lets Codex, Claude, and other MCP agents discover,
 materialize, query, visualize, select, and cite scientific data without putting
 credentials, private paths, or millions of rows into model context.
@@ -18,13 +18,13 @@ provider-independent manifest, query, view, selection, and provenance model.
 > let me select an individual return or image pixel, then query the exact source
 > point or spectrum behind my selection.”
 
-![EcoScope rendering an official NEON LiDAR tile and hyperspectral cube in Rerun while exposing the selected source point as structured agent context](docs/assets/ecoscope-neon-multimodal.jpg)
+![WildDatum rendering an official NEON LiDAR tile and hyperspectral cube in Rerun while exposing the selected source point as structured agent context](docs/assets/wilddatum-neon-multimodal.jpg)
 
-_A real EcoScope browser session using Rerun Web Viewer: a 6.6-million-point
+_A real WildDatum browser session using Rerun Web Viewer: a 6.6-million-point
 NEON LAS tile, a 500×500×107 reflectance cube, immutable provenance, and a
 verified selection mapped back to LAS source row 1,800,316._
 
-<!-- mcp-name: io.github.krnzt/ecoscope -->
+<!-- mcp-name: io.github.krnzt/wilddatum -->
 
 ## The human–agent loop
 
@@ -35,7 +35,7 @@ scientific question
     → materialize immutable, checksum-verified sources
     → query and render a bounded multimodal Rerun view
     → human clicks, brushes, filters, or selects
-    → EcoScope records that interaction as scientific state
+    → WildDatum records that interaction as scientific state
     → agent queries the exact selected source data
     → export results, transformations, provenance, and citation
 ```
@@ -43,7 +43,7 @@ scientific question
 The visualization is not just a picture for the model to inspect. `EcoViewSpec`
 is authoritative view state and `SemanticSelection` is authoritative interaction
 state. A Rerun recording is a regenerable rendering artifact. For verified
-EcoScope point batches, an instance pick maps back to an exact LAS/LAZ source
+WildDatum point batches, an instance pick maps back to an exact LAS/LAZ source
 row; for a mapped cube, an image click maps back to the complete source spectrum.
 For linked trajectories and vertical profiles, a map or profile point maps back
 to the exact original CSV/TSV record, including provider-native QC values.
@@ -80,18 +80,24 @@ The alpha ships self-contained macOS universal and Linux x86-64 packages. You
 do not need Rust, Node.js, CMake, or a separate Rerun installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/krnzt/ecoscope/v0.1.0-alpha.1/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/krnzt/wilddatum/v0.1.0-alpha.1/scripts/install.sh | sh
 ```
 
 The installer verifies the release SHA-256, installs under `~/.local` by
-default, and runs `ecoscope setup`. Set `ECOSCOPE_INSTALL_DIR` to choose another
+default, and runs `wilddatum setup`. Set `WILDDATUM_INSTALL_DIR` to choose another
 prefix. If `~/.local/bin` is not already on your `PATH`, add it before continuing.
+
+Existing EcoScope alpha installations remain readable. WildDatum falls back to
+legacy `ECOSCOPE_DATA_DIR`, `ECOSCOPE_CACHE_DIR`, `ECOSCOPE_WEB_DIST`, default
+application-data directories, and NEON keychain entries when their WildDatum
+equivalents are absent. The installer also leaves an `ecoscope` command alias
+when it can do so without replacing a user-owned file.
 
 Create a deterministic LiDAR + hyperspectral demonstration and open it in the
 bundled Rerun browser viewer:
 
 ```bash
-ecoscope demo synthetic
+wilddatum demo synthetic
 ```
 
 The generated LAS and HDF5 files pass through the same import, manifest, cube
@@ -100,29 +106,29 @@ credentials are needed. An opt-in official NEON teaching-data demonstration is
 also available (roughly 224 MiB):
 
 ```bash
-ecoscope demo neon --accept-download
+wilddatum demo neon --accept-download
 ```
 
 ## Register the normal MCP server
 
-EcoScope is published as `io.github.krnzt/ecoscope` in the official MCP
+WildDatum is published as `io.github.krnzt/wilddatum` in the official MCP
 Registry. It is also a normal local stdio server: Codex, Claude Code, and any
-compatible host launch the same `ecoscope mcp` process and discover its tools.
+compatible host launch the same `wilddatum mcp` process and discover its tools.
 
 ```bash
-ecoscope register codex
-ecoscope register claude
+wilddatum register codex
+wilddatum register claude
 ```
 
 Both registration commands are safe to repeat and preserve an existing
-EcoScope entry. Platform-specific MCPB bundles are attached to every release
+WildDatum entry. Platform-specific MCPB bundles are attached to every release
 for hosts and registries that install MCPB packages.
 
 Equivalent host commands are:
 
 ```bash
-codex mcp add ecoscope -- /absolute/path/to/ecoscope mcp
-claude mcp add --scope user ecoscope -- /absolute/path/to/ecoscope mcp
+codex mcp add wilddatum -- /absolute/path/to/wilddatum mcp
+claude mcp add --scope user wilddatum -- /absolute/path/to/wilddatum mcp
 ```
 
 Generic MCP configuration:
@@ -130,26 +136,26 @@ Generic MCP configuration:
 ```json
 {
   "mcpServers": {
-    "ecoscope": {
-      "command": "/home/you/.local/bin/ecoscope",
+    "wilddatum": {
+      "command": "/home/you/.local/bin/wilddatum",
       "args": ["mcp"]
     }
   }
 }
 ```
 
-After registration, the host launches EcoScope like any other local MCP server,
+After registration, the host launches WildDatum like any other local MCP server,
 negotiates the protocol, discovers its tools, and receives bounded structured
 results rather than bulk scientific files.
 
 ## Use local scientific files
 
 ```bash
-ecoscope import examples/observations.csv
-ecoscope datasets
-ecoscope preview ds_... --limit 20
-ecoscope create-view --name "Site comparison" ds_...
-ecoscope open view_...
+wilddatum import examples/observations.csv
+wilddatum datasets
+wilddatum preview ds_... --limit 20
+wilddatum create-view --name "Site comparison" ds_...
+wilddatum open view_...
 ```
 
 Local paths are selected in the terminal, never passed as an MCP argument. The
@@ -165,7 +171,7 @@ data, not a provider-specific renderer. Start locally with the deterministic
 demo:
 
 ```bash
-ecoscope demo profile-trajectory
+wilddatum demo profile-trajectory
 ```
 
 The agent workflow is the same for a local import or materialized ERDDAP table:
@@ -183,11 +189,11 @@ user imports a local CSV/TSV, or agent materializes a provider subset
 
 The recipe explicitly names trajectory/profile identifiers, time, longitude,
 latitude, vertical coordinate and direction, one displayed value, units, fill
-values, and accepted native QC codes. EcoScope validates those fields against
+values, and accepted native QC codes. WildDatum validates those fields against
 the source before authoring the exact-row mapping; the browser cannot declare a
 source index trusted.
 
-![EcoScope linked trajectory map and vertical temperature profile with a real Rerun point selection serialized as exact-row agent context](docs/assets/profile-trajectory-explorer.png)
+![WildDatum linked trajectory map and vertical temperature profile with a real Rerun point selection serialized as exact-row agent context](docs/assets/profile-trajectory-explorer.png)
 
 _The shipped synthetic profile demo in Rerun Web Viewer. The selected profile
 observation is persisted as a `rows` selection containing only its Rerun entity,
@@ -200,14 +206,14 @@ Metadata discovery does not require credentials. Exact file planning and
 downloads use a NEON API token stored outside model context:
 
 ```bash
-./target/release/ecoscope connect-neon
+./target/release/wilddatum connect-neon
 ```
 
-The prompt does not echo the token. EcoScope stores it in the operating-system
+The prompt does not echo the token. WildDatum stores it in the operating-system
 keychain and sends it upstream only in the `X-API-Token` header. Headless systems
 can inject `NEON_API_TOKEN` through their secret manager.
 
-`ecoscope doctor` time-boxes its noninteractive keychain probe. A
+`wilddatum doctor` time-boxes its noninteractive keychain probe. A
 `neon_connected: null` result with `neon_credential_probe: "timed_out"` means the
 operating system did not answer the readiness probe; it does not expose or erase
 the stored credential.
@@ -244,7 +250,7 @@ then construct a typed table subset:
 ```
 
 That is the input to `plan_materialization`; planning does not download the
-dataset. EcoScope validates every variable against ERDDAP `info` metadata,
+dataset. WildDatum validates every variable against ERDDAP `info` metadata,
 translates neutral temporal bounds into `time` constraints for tabledap, probes
 the exact redirect chain, and returns one URL for approval. Call `approve_plan`
 with the returned hash and then `materialize_dataset`. The stored object is named
@@ -276,9 +282,9 @@ is generally unknown at approval time, so constrain variables, rows, time, and
 grid axes carefully. Materialization freezes the exact returned bytes locally;
 repeating the same upstream query later may produce a different checksum.
 
-![EcoScope rendering EMSO OBSEA seabed temperature and native quality-control data in Rerun with provenance and structured agent context](docs/assets/ecoscope-erddap-obsea.jpg)
+![WildDatum rendering EMSO OBSEA seabed temperature and native quality-control data in Rerun with provenance and structured agent context](docs/assets/wilddatum-erddap-obsea.jpg)
 
-_A real EMSO workflow executed through EcoScope's registered stdio MCP:
+_A real EMSO workflow executed through WildDatum's registered stdio MCP:
 `plan_materialization` → `approve_plan` → `materialize_dataset` → `create_view`
 → `render_view`. The browser shows the public OBSEA temperature and native QC
 channels, the regenerable `EcoViewSpec`, and selection events returned as
@@ -286,12 +292,12 @@ structured agent context._
 
 ## Multidimensional data
 
-EcoScope inventories cube arrays without guessing ambiguous scientific meaning.
+WildDatum inventories cube arrays without guessing ambiguous scientific meaning.
 When X, Y, and spectral axes are unambiguous, common NEON reflectance conventions
 are inferred. Otherwise the mapping is explicit and revisioned:
 
 ```bash
-./target/release/ecoscope configure-cube view_... \
+./target/release/wilddatum configure-cube view_... \
   --layer-id layer_1 \
   --cube-array /SITE/Reflectance/Reflectance_Data \
   --y-axis 0 --x-axis 1 --spectral-axis 2 \
@@ -308,8 +314,8 @@ institution-shaped. Install a trusted
 language-neutral provider executable with:
 
 ```bash
-./target/release/ecoscope provider install ./my-provider.json
-./target/release/ecoscope provider list
+./target/release/wilddatum provider install ./my-provider.json
+./target/release/wilddatum provider list
 ```
 
 Installation performs a protocol handshake and validates provider identity,
@@ -324,7 +330,7 @@ MCP input across providers.
 
 ## Known limitations
 
-- EcoScope is local stdio MCP today; remote Streamable HTTP and OAuth are not
+- WildDatum is local stdio MCP today; remote Streamable HTTP and OAuth are not
   implemented yet.
 - The alpha macOS executables are not Apple-notarized. macOS may require an
   explicit first-run approval; release checksums still protect artifact integrity.
@@ -335,7 +341,7 @@ MCP input across providers.
   selections use the same `record_selection`/`query_selection` path.
 - GeoParquet supports exact GeoDataFusion queries but not direct geometry logging
   into Rerun yet; GeoPackage currently has inspection but no query adapter.
-- EcoScope-derived COPC indexes provide full-resolution spatial access but do
+- WildDatum-derived COPC indexes provide full-resolution spatial access but do
   not yet contain a provider-quality multiresolution hierarchy.
 - Generic ERDDAP planning does not infer institution-specific station/location
   dimensions or translate arbitrary polygons. Use typed tabledap constraints or
@@ -353,12 +359,12 @@ Building from source requires Rust 1.95, Node.js 22, CMake, and a C/C++
 compiler. Linux uses a vendored static D-Bus client for keychain access.
 
 ```bash
-git clone https://github.com/krnzt/ecoscope.git
-cd ecoscope
+git clone https://github.com/krnzt/wilddatum.git
+cd wilddatum
 npm --prefix viewer/web-bootstrap ci
 npm --prefix viewer/web-bootstrap run build
 cargo build --release
-./target/release/ecoscope setup
+./target/release/wilddatum setup
 ```
 
 Run the complete validation suite with:
@@ -382,7 +388,7 @@ curl -fL -o /tmp/neon-point-cloud.las https://ndownloader.figshare.com/files/702
 curl -fL -o /tmp/neon-hyperspectral.h5 https://ndownloader.figshare.com/files/21754221
 NEON_POINT_CLOUD_FIXTURE=/tmp/neon-point-cloud.las \
 NEON_HYPERSPECTRAL_FIXTURE=/tmp/neon-hyperspectral.h5 \
-cargo test -p ecoscope-rerun --test official_neon_fixtures -- --ignored
+cargo test -p wilddatum-rerun --test official_neon_fixtures -- --ignored
 ```
 
 The maintained ERDDAP presets also have opt-in live drift checks. They search
@@ -391,19 +397,19 @@ run a bounded current Euro-Argo profile through CF discovery, materialization,
 recipe validation, and Rerun rendering:
 
 ```bash
-cargo test -p ecoscope-provider-erddap --test live -- --ignored
-cargo test -p ecoscope-provider-erddap --test argo_profile_smoke -- --ignored
+cargo test -p wilddatum-provider-erddap --test live -- --ignored
+cargo test -p wilddatum-provider-erddap --test argo_profile_smoke -- --ignored
 ```
 
 Build local MCPB and archive artifacts after the Rust and browser builds with
-`scripts/package-release.sh target/release/ecoscope dist macos-arm64 darwin`
+`scripts/package-release.sh target/release/wilddatum dist macos-arm64 darwin`
 (substitute `linux-x86_64 linux` on Linux). The tag workflow builds and combines
 both macOS architectures, verifies the Linux linkage, publishes checksummed
 release assets, and submits the generated `server.json` using GitHub OIDC.
 
 ## Project status
 
-EcoScope is an early public alpha. The scientific data model, provider contract,
+WildDatum is an early public alpha. The scientific data model, provider contract,
 and Rerun boundary are designed for extension, but APIs and packaging may still
 change before the first stable release.
 
@@ -414,5 +420,5 @@ adapters, selection semantics, accessibility, and reproducible ecological
 demonstrations. Read [CONTRIBUTING.md](CONTRIBUTING.md) and open an issue before
 starting a large provider or viewer change.
 
-EcoScope is MIT licensed. Rerun is used under its MIT/Apache-2.0 license; built
+WildDatum is MIT licensed. Rerun is used under its MIT/Apache-2.0 license; built
 bundles retain the required notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

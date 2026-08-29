@@ -1,10 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.krnzt/ecoscope",
-  "title": "EcoScope",
+  "name": "io.github.krnzt/wilddatum",
+  "title": "WildDatum",
   "description": "Agent-native ecological data discovery, analysis, visualization, and provenance",
   "repository": {
-    "url": "https://github.com/krnzt/ecoscope",
+    "url": "https://github.com/krnzt/wilddatum",
     "source": "github"
   },
   "version": "${VERSION}",

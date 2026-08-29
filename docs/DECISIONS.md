@@ -2,7 +2,7 @@
 
 ## Standard MCP first
 
-EcoScope is a normal MCP 2026-07-28 stdio server. Codex and Claude Code launch
+WildDatum is a normal MCP 2026-07-28 stdio server. Codex and Claude Code launch
 the same native binary and discover its tools through MCP. No host-specific
 plugin is required for the scientific interface. MCPB is an additional release
 artifact, not the runtime architecture.
@@ -16,11 +16,11 @@ changing provider, manifest, view, or selection models.
 
 Rerun already supplies a high-performance native viewer, a browser WebAssembly
 viewer, spatial and temporal entity models, point clouds, images, scalar plots,
-selection events, and a versioned recording format. EcoScope owns the ecological
+selection events, and a versioned recording format. WildDatum owns the ecological
 semantics around it: discovery, source mapping, provenance, reproducible view
 state, and conversion of human selections into MCP-readable records.
 
-Rerun is intentionally isolated in `ecoscope-rerun` and pinned. An upgrade is a
+Rerun is intentionally isolated in `wilddatum-rerun` and pinned. An upgrade is a
 tested adapter change rather than a repository-wide rewrite. `EcoViewSpec` and
 `SemanticSelection` remain authoritative; an RRD is a regenerable artifact.
 
@@ -36,7 +36,7 @@ scientific logic is not duplicated there.
 
 HDF5 containers may contain many arrays, and an arbitrary three-dimensional
 array does not establish which dimension is wavelength or which bands should be
-displayed. EcoScope therefore inventories datasets and shapes, then requires an
+displayed. WildDatum therefore inventories datasets and shapes, then requires an
 explicit layer mapping before rendering. The mapping travels with view state and
 can be cited as a transformation.
 
@@ -51,12 +51,12 @@ The shared provider contract is JSON, not a Rust dynamic-library ABI. Built-in
 providers may implement the Rust trait directly. Community providers are
 explicitly installed subprocesses using bounded newline-delimited JSON-RPC and
 a negotiated capability manifest. This lets RI contributors work in their
-normal ecosystem without coupling EcoScope to Python embedding or an unstable
+normal ecosystem without coupling WildDatum to Python embedding or an unstable
 Rust ABI.
 
 Subprocess installation is a code-trust decision. Origin validation, cleared
 environment variables, timeouts, and response limits reduce accidental scope;
-they are not an OS sandbox. Credentials remain in EcoScope-owned brokers and
+they are not an OS sandbox. Credentials remain in WildDatum-owned brokers and
 are never transported to a community subprocess.
 
 ## Provider-neutral materialization vocabulary

@@ -5,7 +5,7 @@ const PINNED_RERUN_VERSION = "0.36.2";
 
 const token = new URLSearchParams(window.location.search).get("token");
 if (!token) {
-  throw new Error("This EcoScope explorer link is missing its launch token.");
+  throw new Error("This WildDatum explorer link is missing its launch token.");
 }
 
 const status = element("status");

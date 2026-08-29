@@ -34,7 +34,7 @@ jobs:
         run: npm run test:e2e
         working-directory: viewer/web-bootstrap
         env:
-          ECOSCOPE_BIN: ${{ github.workspace }}/target/debug/ecoscope
+          WILDDATUM_BIN: ${{ github.workspace }}/target/debug/wilddatum
 
   web:
     runs-on: ubuntu-latest

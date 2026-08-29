@@ -7,7 +7,7 @@ tag="${2:?tag is required}"
 macos_mcpb="${3:?macOS MCPB is required}"
 linux_mcpb="${4:?Linux MCPB is required}"
 output="${5:-$repo_dir/server.json}"
-release_base="https://github.com/krnzt/ecoscope/releases/download/$tag"
+release_base="https://github.com/krnzt/wilddatum/releases/download/$tag"
 
 sha() {
   shasum -a 256 "$1" | awk '{print $1}'

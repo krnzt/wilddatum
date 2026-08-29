@@ -1,0 +1,28 @@
+[package]
+name = "wilddatum-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+wilddatum-core = { path = "../wilddatum-core" }
+wilddatum-provider-api = { path = "../wilddatum-provider-api" }
+wilddatum-provider-erddap = { path = "../wilddatum-provider-erddap" }
+wilddatum-provider-neon = { path = "../wilddatum-provider-neon" }
+wilddatum-provider-process = { path = "../wilddatum-provider-process" }
+wilddatum-rerun = { path = "../wilddatum-rerun" }
+wilddatum-service = { path = "../wilddatum-service" }
+keyring.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rmcp = { workspace = true, features = ["client", "transport-async-rw"] }
+tempfile.workspace = true

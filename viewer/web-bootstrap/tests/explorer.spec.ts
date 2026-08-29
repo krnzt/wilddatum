@@ -9,7 +9,7 @@ import {promisify} from "node:util";
 const execute = promisify(execFile);
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repository = path.resolve(testDirectory, "../../..");
-const executable = process.env.ECOSCOPE_BIN ?? path.join(repository, "target/debug/ecoscope");
+const executable = process.env.WILDDATUM_BIN ?? path.join(repository, "target/debug/wilddatum");
 
 let stateRoot: string;
 let explorer: ChildProcessWithoutNullStreams;
@@ -18,7 +18,7 @@ let pointViewId: string;
 let profileViewId: string;
 
 test.beforeAll(async () => {
-  stateRoot = await mkdtemp(path.join(tmpdir(), "ecoscope-browser-smoke-"));
+  stateRoot = await mkdtemp(path.join(tmpdir(), "wilddatum-browser-smoke-"));
   const environment = demoEnvironment();
   const {stdout} = await execute(executable, ["demo", "synthetic", "--no-open"], {
     env: environment,
@@ -55,7 +55,7 @@ test("renders LiDAR and hyperspectral views and records real Rerun picks", async
     [0.51, 0.80],
     [0.15, 0.25, 0.35, 0.1, 0.4]
   );
-  expect(cubeSelection.selection.array_path).toBe("/EcoScope/Reflectance");
+  expect(cubeSelection.selection.array_path).toBe("/WildDatum/Reflectance");
   expect(cubeSelection.selection.x).toBeGreaterThanOrEqual(0);
   expect(cubeSelection.selection.y).toBeGreaterThanOrEqual(0);
 
@@ -126,9 +126,9 @@ test("profile trajectory contract exposes a real Rerun instance pick", async ({p
   expect(profilePick.record.selection.predicate.instance_id).toBe(profilePick.item.instance_id);
   expect(profilePick.record.selection.predicate.entity_path).toBe(profilePick.item.entity_path);
   await expect(page.locator("#viewer")).not.toContainText("Rerun has crashed");
-  if (process.env.ECOSCOPE_PROFILE_SCREENSHOT) {
+  if (process.env.WILDDATUM_PROFILE_SCREENSHOT) {
     await page.screenshot({
-      path: process.env.ECOSCOPE_PROFILE_SCREENSHOT,
+      path: process.env.WILDDATUM_PROFILE_SCREENSHOT,
       fullPage: true
     });
   }
@@ -144,7 +144,7 @@ async function startExplorer(viewId: string): Promise<string> {
     let output = "";
     explorer.stdout.on("data", chunk => {
       output += chunk.toString();
-      const match = output.match(/EcoScope explorer: (http:\/\/[^\s]+)/);
+      const match = output.match(/WildDatum explorer: (http:\/\/[^\s]+)/);
       if (match) {
         clearTimeout(timeout);
         resolve(match[1]);
@@ -256,8 +256,8 @@ async function clickNearObservation(
 function demoEnvironment(): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    ECOSCOPE_DATA_DIR: path.join(stateRoot, "data"),
-    ECOSCOPE_CACHE_DIR: path.join(stateRoot, "cache"),
-    ECOSCOPE_WEB_DIST: path.join(repository, "viewer/web-bootstrap/dist")
+    WILDDATUM_DATA_DIR: path.join(stateRoot, "data"),
+    WILDDATUM_CACHE_DIR: path.join(stateRoot, "cache"),
+    WILDDATUM_WEB_DIST: path.join(repository, "viewer/web-bootstrap/dist")
   };
 }

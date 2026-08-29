@@ -41,14 +41,14 @@ jobs:
         with:
           toolchain: "1.95.0"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked -p ecoscope-cli
-      - run: target/release/ecoscope --version
+      - run: cargo build --release --locked -p wilddatum-cli
+      - run: target/release/wilddatum --version
       - name: Ensure the release does not dynamically depend on libdbus
-        run: '! ldd target/release/ecoscope | grep -q libdbus'
+        run: '! ldd target/release/wilddatum | grep -q libdbus'
       - uses: actions/upload-artifact@v7
         with:
           name: binary-linux-x86_64
-          path: target/release/ecoscope
+          path: target/release/wilddatum
           if-no-files-found: error
 
   macos-arm64:
@@ -61,12 +61,12 @@ jobs:
         with:
           toolchain: "1.95.0"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked -p ecoscope-cli
-      - run: target/release/ecoscope --version
+      - run: cargo build --release --locked -p wilddatum-cli
+      - run: target/release/wilddatum --version
       - uses: actions/upload-artifact@v7
         with:
           name: binary-macos-arm64
-          path: target/release/ecoscope
+          path: target/release/wilddatum
           if-no-files-found: error
 
   macos-x86_64:
@@ -79,12 +79,12 @@ jobs:
         with:
           toolchain: "1.95.0"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --locked -p ecoscope-cli
-      - run: target/release/ecoscope --version
+      - run: cargo build --release --locked -p wilddatum-cli
+      - run: target/release/wilddatum --version
       - uses: actions/upload-artifact@v7
         with:
           name: binary-macos-x86_64
-          path: target/release/ecoscope
+          path: target/release/wilddatum
           if-no-files-found: error
 
   package-linux:
@@ -100,8 +100,8 @@ jobs:
         with:
           name: binary-linux-x86_64
           path: release-input/linux
-      - run: chmod +x release-input/linux/ecoscope
-      - run: scripts/package-release.sh release-input/linux/ecoscope dist linux-x86_64 linux
+      - run: chmod +x release-input/linux/wilddatum
+      - run: scripts/package-release.sh release-input/linux/wilddatum dist linux-x86_64 linux
       - uses: actions/upload-artifact@v7
         with:
           name: release-linux-x86_64
@@ -127,13 +127,13 @@ jobs:
           path: release-input/x86_64
       - name: Create and verify the universal executable
         run: |
-          chmod +x release-input/arm64/ecoscope release-input/x86_64/ecoscope
+          chmod +x release-input/arm64/wilddatum release-input/x86_64/wilddatum
           mkdir -p release-input/universal
-          lipo -create release-input/arm64/ecoscope release-input/x86_64/ecoscope -output release-input/universal/ecoscope
-          lipo -archs release-input/universal/ecoscope | grep -q arm64
-          lipo -archs release-input/universal/ecoscope | grep -q x86_64
-          release-input/universal/ecoscope --version
-      - run: scripts/package-release.sh release-input/universal/ecoscope dist macos-universal darwin
+          lipo -create release-input/arm64/wilddatum release-input/x86_64/wilddatum -output release-input/universal/wilddatum
+          lipo -archs release-input/universal/wilddatum | grep -q arm64
+          lipo -archs release-input/universal/wilddatum | grep -q x86_64
+          release-input/universal/wilddatum --version
+      - run: scripts/package-release.sh release-input/universal/wilddatum dist macos-universal darwin
       - uses: actions/upload-artifact@v7
         with:
           name: release-macos-universal
@@ -161,8 +161,8 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           scripts/render-server-json.sh \
             "$version" "$GITHUB_REF_NAME" \
-            "dist/ecoscope-v${version}-macos-universal.mcpb" \
-            "dist/ecoscope-v${version}-linux-x86_64.mcpb" \
+            "dist/wilddatum-v${version}-macos-universal.mcpb" \
+            "dist/wilddatum-v${version}-linux-x86_64.mcpb" \
             dist/server.json
       - name: Create prerelease and upload verified artifacts
         uses: softprops/action-gh-release@v3

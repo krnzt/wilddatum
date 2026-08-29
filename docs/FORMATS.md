@@ -1,6 +1,6 @@
 # Format support
 
-EcoScope separates physical encoding from scientific modality. Importing a
+WildDatum separates physical encoding from scientific modality. Importing a
 container records what is observable without guessing; a versioned mapping adds
 axis roles, wavelengths, CRS, no-data, scaling, or display bands when those
 semantics are ambiguous.
@@ -19,7 +19,7 @@ semantics are ambiguous.
 | GeoPackage | generic import | not yet | not yet | Recognized as vector modality but has no SQLite/geometry adapter yet |
 | LAS/LAZ | yes | bbox/class/elevation or verified source row | yes | Sequential spatial scan; rendering samples at most 1,000,000 points and records the stride |
 | Provider-authored COPC | yes | indexed octree bbox + level/resolution | yes | Native COPC hierarchy supports LOD selection |
-| EcoScope-derived COPC | yes | indexed full-resolution bbox | yes | Immutable derivative of LAS/LAZ; current writer cannot author provider-quality LOD hierarchy |
+| WildDatum-derived COPC | yes | indexed full-resolution bbox | yes | Immutable derivative of LAS/LAZ; current writer cannot author provider-quality LOD hierarchy |
 | HDF5/NetCDF-4 | hierarchy + arrays | bounded N-D hyperslab | mapped band/RGB | Arbitrary rank is queryable; rendering currently expects one mapped rank-3 image cube |
 | NetCDF-3 | variables + dimensions | bounded N-D slice | mapped band/RGB | Pure-Rust reader currently decodes the whole source variable and rejects variables over the safety budget |
 | Zarr v2/v3 directory | hierarchy + arrays | bounded N-D slice | mapped band/RGB | Chunk-aware bounding reads; symbolic links are rejected during fingerprinting |
@@ -38,12 +38,12 @@ tiled, compressed Cloud-Optimized GeoTIFF.
 Each axis records its role (`x`, `y`, `z`, `time`, `spectral`, `channel`, or
 `other`), length, unit, and coordinate path when known.
 
-EcoScope infers common NEON reflectance conventions only when a rank-3
+WildDatum infers common NEON reflectance conventions only when a rank-3
 reflectance array and a compatible wavelength coordinate are unambiguous.
 Otherwise configure the layer explicitly:
 
 ```bash
-ecoscope configure-cube view_... \
+wilddatum configure-cube view_... \
   --layer-id layer_1 \
   --cube-array /SITE/Reflectance/Reflectance_Data \
   --y-axis 0 --x-axis 1 --spectral-axis 2 \
@@ -65,11 +65,11 @@ the RGB canvas.
 ## Point clouds and display precision
 
 LAS stores scaled integer coordinates while Rerun renders `f32` positions.
-EcoScope subtracts a source-coordinate origin before logging points and records
+WildDatum subtracts a source-coordinate origin before logging points and records
 the origin, LAS scale/offset, sampling stride, and instance mapping in
 `EcoViewSpec`.
 
-For an EcoScope-authored sequential point batch, a Rerun instance ID maps to the
+For an WildDatum-authored sequential point batch, a Rerun instance ID maps to the
 zero-based source row by `instance_id × sampling_stride`. The service accepts
 that exact-row path only after independently checking the mapping kind, pinned
 Rerun version, stride, supplied instance ID, and supplied source index. Rerun's
@@ -101,7 +101,7 @@ profile uses the raw vertical and value coordinates in a `Spatial2DView`; a
 positive-down axis is displayed downward without changing the stored source
 value. Rerun currently applies an equal raw-coordinate aspect, so a temperature
 range of a few degrees against thousands of decibars can look like a nearly
-vertical line. EcoScope preserves the honest axes instead of inventing a visual
+vertical line. WildDatum preserves the honest axes instead of inventing a visual
 scale transform.
 
 Each finite observation is logged with its zero-based delimited source-record
@@ -128,7 +128,7 @@ through MCP or the browser API.
 
 ## ERDDAP subsets and modalities
 
-ERDDAP is a remote access protocol, not a new local container format. EcoScope
+ERDDAP is a remote access protocol, not a new local container format. WildDatum
 materializes an approved tabledap or griddap expression as CSV or NetCDF and
 then uses the same query and Rerun adapters listed above. The source filename in
 the manifest preserves `.csv` or `.nc` even though the immutable object-store
@@ -136,7 +136,7 @@ name is its extensionless BLAKE3 digest.
 
 ERDDAP `cdm_data_type` metadata supplies conservative modality hints:
 
-| `cdm_data_type` | EcoScope modalities |
+| `cdm_data_type` | WildDatum modalities |
 |---|---|
 | `Grid` | raster, tensor |
 | `Trajectory`, `Profile`, `TrajectoryProfile`, `TimeSeriesProfile` | vector, time-series, tabular |
@@ -148,7 +148,7 @@ These hints do not invent a visualization grammar. Grid NetCDF uses explicit
 cube/axis configuration when metadata is ambiguous. Trajectory and profile CSV
 can be queried immediately and configured into the linked recipe above. CF
 `cf_role`, `standard_name`, units, axes, and fill values are preserved as
-variable-level manifest metadata, but EcoScope does not silently choose a value
+variable-level manifest metadata, but WildDatum does not silently choose a value
 or institutional QC policy. Native variables, QC columns, global attributes,
 license, and citation remain available rather than being flattened into the
 rendered scene.

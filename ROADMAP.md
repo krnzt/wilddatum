@@ -1,6 +1,6 @@
-# EcoScope roadmap
+# WildDatum roadmap
 
-EcoScope is building an agent-native ecological data workbench: one standard
+WildDatum is building an agent-native ecological data workbench: one standard
 MCP interface for finding, materializing, querying, visualizing, selecting, and
 citing ecological data from Research Infrastructures and local files.
 
@@ -12,7 +12,7 @@ Rerun browser verification where visualization is involved.
 
 ## Shipped: public multimodal alpha
 
-- Standard local MCP server registered as `io.github.krnzt/ecoscope`.
+- Standard local MCP server registered as `io.github.krnzt/wilddatum`.
 - NEON discovery, approval, authenticated materialization, checksums, license,
   citation, and immutable manifests.
 - Local CSV, Parquet, Arrow, imagery, raster, vector, LAS/LAZ/COPC,
@@ -42,7 +42,7 @@ RIs instead of adding institution-specific MCP tools.
 
 ## Following: authenticated ecological repositories
 
-- EcoScope-owned credential broker using opaque connection references; models
+- WildDatum-owned credential broker using opaque connection references; models
   and community-provider processes never receive credential values.
 - SAEON discovery and Parquet/CSV observation materialization through its
   OpenAPI/OData service.
@@ -68,7 +68,7 @@ RIs instead of adding institution-specific MCP tools.
 
 These are release-independent quality commitments:
 
-- Keep Rerun behind the `ecoscope-rerun` boundary and verify every upgrade with
+- Keep Rerun behind the `wilddatum-rerun` boundary and verify every upgrade with
   real browser rendering and semantic-selection tests.
 - Preserve native QC flags, units, CRS, provider metadata, access policy,
   transformations, and citations without flattening them into prose.

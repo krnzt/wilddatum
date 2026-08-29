@@ -1,0 +1,29 @@
+[package]
+name = "wilddatum-rerun"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+csv.workspace = true
+wilddatum-core = { path = "../wilddatum-core" }
+wilddatum-service = { path = "../wilddatum-service" }
+fixed.workspace = true
+flatgeobuf.workspace = true
+geo.workspace = true
+geojson.workspace = true
+geozero.workspace = true
+hdf5-metno.workspace = true
+image.workspace = true
+las.workspace = true
+ndarray.workspace = true
+netcdf3.workspace = true
+rerun.workspace = true
+serde_json.workspace = true
+shapefile.workspace = true
+zarrs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true

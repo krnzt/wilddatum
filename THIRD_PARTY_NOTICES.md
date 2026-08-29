@@ -1,6 +1,6 @@
 # Third-party notices
 
-EcoScope includes or links open-source components. The complete resolved Rust
+WildDatum includes or links open-source components. The complete resolved Rust
 and JavaScript dependency sets are recorded in `Cargo.lock` and
 `viewer/web-bootstrap/package-lock.json`.
 
@@ -13,5 +13,5 @@ Major runtime components include:
 - `las` / `laz` — MIT
 - Axum, Tokio, Serde, and the wider Rust ecosystem — their respective licenses
 
-Redistributors should preserve this notice, the EcoScope MIT license, and the
+Redistributors should preserve this notice, the WildDatum MIT license, and the
 license metadata supplied with the resolved dependencies.

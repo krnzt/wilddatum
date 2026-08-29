@@ -2285,265 +2285,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18aade80d5e09429040243ce1143ddc08a92d7a22820ac512610410a4dd5214f"
 
 [[package]]
-name = "ecoscope-cli"
-version = "0.1.0-alpha.1"
-dependencies = [
- "anyhow",
- "clap",
- "ecoscope-core",
- "ecoscope-mcp",
- "ecoscope-provider-api",
- "ecoscope-provider-process",
- "ecoscope-rerun",
- "ecoscope-service",
- "ecoscope-web",
- "futures",
- "hdf5-metno",
- "las",
- "ndarray 0.17.2",
- "reqwest 0.13.4",
- "rmcp",
- "rpassword",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "ecoscope-core"
-version = "0.1.0-alpha.1"
-dependencies = [
- "blake3",
- "chrono",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "ecoscope-local-import"
-version = "0.1.0-alpha.1"
-dependencies = [
- "blake3",
- "csv",
- "ecoscope-core",
- "flatgeobuf",
- "geojson",
- "geotiff-reader",
- "geotiff-writer",
- "hdf5-metno",
- "image",
- "las",
- "mime_guess",
- "netcdf3",
- "parquet",
- "serde_json",
- "shapefile",
- "tempfile",
- "tokio",
- "walkdir",
- "zarrs",
-]
-
-[[package]]
-name = "ecoscope-mcp"
-version = "0.1.0-alpha.1"
-dependencies = [
- "anyhow",
- "chrono",
- "ecoscope-core",
- "ecoscope-provider-api",
- "ecoscope-provider-erddap",
- "ecoscope-provider-neon",
- "ecoscope-provider-process",
- "ecoscope-rerun",
- "ecoscope-service",
- "keyring",
- "rmcp",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ecoscope-provider-api"
-version = "0.1.0-alpha.1"
-dependencies = [
- "async-trait",
- "ecoscope-core",
- "serde_json",
-]
-
-[[package]]
-name = "ecoscope-provider-erddap"
-version = "0.1.0-alpha.1"
-dependencies = [
- "async-trait",
- "axum",
- "blake3",
- "chrono",
- "csv",
- "ecoscope-core",
- "ecoscope-provider-api",
- "ecoscope-rerun",
- "ecoscope-service",
- "futures",
- "reqwest 0.13.4",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "ecoscope-provider-neon"
-version = "0.1.0-alpha.1"
-dependencies = [
- "async-trait",
- "axum",
- "base64 0.22.1",
- "blake3",
- "chrono",
- "crc32c",
- "ecoscope-core",
- "ecoscope-provider-api",
- "futures",
- "md5",
- "reqwest 0.13.4",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ecoscope-provider-process"
-version = "0.1.0-alpha.1"
-dependencies = [
- "async-trait",
- "chrono",
- "ecoscope-core",
- "ecoscope-provider-api",
- "serde",
- "serde_json",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "ecoscope-query"
-version = "0.1.0-alpha.1"
-dependencies = [
- "arrow-array",
- "arrow-ipc",
- "arrow-json",
- "arrow-schema",
- "csv",
- "datafusion",
- "ecoscope-core",
- "geodatafusion",
- "geodatafusion-geoparquet",
- "parquet",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "ecoscope-rerun"
-version = "0.1.0-alpha.1"
-dependencies = [
- "csv",
- "ecoscope-core",
- "ecoscope-service",
- "fixed",
- "flatgeobuf",
- "geo 0.32.0",
- "geojson",
- "geozero",
- "hdf5-metno",
- "image",
- "las",
- "ndarray 0.17.2",
- "netcdf3",
- "rerun",
- "serde_json",
- "shapefile",
- "tempfile",
- "tokio",
- "zarrs",
-]
-
-[[package]]
-name = "ecoscope-service"
-version = "0.1.0-alpha.1"
-dependencies = [
- "arrow-array",
- "arrow-schema",
- "blake3",
- "chrono",
- "copc-rs",
- "csv",
- "directories",
- "ecoscope-core",
- "ecoscope-local-import",
- "ecoscope-query",
- "flatgeobuf",
- "geo 0.32.0",
- "geojson",
- "geotiff-reader",
- "geotiff-writer",
- "geozero",
- "hdf5-metno",
- "image",
- "las",
- "ndarray 0.17.2",
- "netcdf3",
- "parquet",
- "rusqlite",
- "serde",
- "serde_json",
- "shapefile",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
- "wkt",
- "zarrs",
-]
-
-[[package]]
-name = "ecoscope-web"
-version = "0.1.0-alpha.1"
-dependencies = [
- "anyhow",
- "axum",
- "ecoscope-core",
- "ecoscope-rerun",
- "ecoscope-service",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tower-http",
- "tracing",
- "uuid",
- "webbrowser",
-]
-
-[[package]]
 name = "ehttp"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8702,6 +8443,265 @@ name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
+
+[[package]]
+name = "wilddatum-cli"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "hdf5-metno",
+ "las",
+ "ndarray 0.17.2",
+ "reqwest 0.13.4",
+ "rmcp",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wilddatum-core",
+ "wilddatum-mcp",
+ "wilddatum-provider-api",
+ "wilddatum-provider-process",
+ "wilddatum-rerun",
+ "wilddatum-service",
+ "wilddatum-web",
+]
+
+[[package]]
+name = "wilddatum-core"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "blake3",
+ "chrono",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "wilddatum-local-import"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "blake3",
+ "csv",
+ "flatgeobuf",
+ "geojson",
+ "geotiff-reader",
+ "geotiff-writer",
+ "hdf5-metno",
+ "image",
+ "las",
+ "mime_guess",
+ "netcdf3",
+ "parquet",
+ "serde_json",
+ "shapefile",
+ "tempfile",
+ "tokio",
+ "walkdir",
+ "wilddatum-core",
+ "zarrs",
+]
+
+[[package]]
+name = "wilddatum-mcp"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "keyring",
+ "rmcp",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "wilddatum-core",
+ "wilddatum-provider-api",
+ "wilddatum-provider-erddap",
+ "wilddatum-provider-neon",
+ "wilddatum-provider-process",
+ "wilddatum-rerun",
+ "wilddatum-service",
+]
+
+[[package]]
+name = "wilddatum-provider-api"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "wilddatum-core",
+]
+
+[[package]]
+name = "wilddatum-provider-erddap"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "blake3",
+ "chrono",
+ "csv",
+ "futures",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+ "wilddatum-core",
+ "wilddatum-provider-api",
+ "wilddatum-rerun",
+ "wilddatum-service",
+]
+
+[[package]]
+name = "wilddatum-provider-neon"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "blake3",
+ "chrono",
+ "crc32c",
+ "futures",
+ "md5",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "wilddatum-core",
+ "wilddatum-provider-api",
+]
+
+[[package]]
+name = "wilddatum-provider-process"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+ "wilddatum-core",
+ "wilddatum-provider-api",
+]
+
+[[package]]
+name = "wilddatum-query"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "arrow-array",
+ "arrow-ipc",
+ "arrow-json",
+ "arrow-schema",
+ "csv",
+ "datafusion",
+ "geodatafusion",
+ "geodatafusion-geoparquet",
+ "parquet",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "wilddatum-core",
+]
+
+[[package]]
+name = "wilddatum-rerun"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "csv",
+ "fixed",
+ "flatgeobuf",
+ "geo 0.32.0",
+ "geojson",
+ "geozero",
+ "hdf5-metno",
+ "image",
+ "las",
+ "ndarray 0.17.2",
+ "netcdf3",
+ "rerun",
+ "serde_json",
+ "shapefile",
+ "tempfile",
+ "tokio",
+ "wilddatum-core",
+ "wilddatum-service",
+ "zarrs",
+]
+
+[[package]]
+name = "wilddatum-service"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "blake3",
+ "chrono",
+ "copc-rs",
+ "csv",
+ "directories",
+ "flatgeobuf",
+ "geo 0.32.0",
+ "geojson",
+ "geotiff-reader",
+ "geotiff-writer",
+ "geozero",
+ "hdf5-metno",
+ "image",
+ "las",
+ "ndarray 0.17.2",
+ "netcdf3",
+ "parquet",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "shapefile",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wilddatum-core",
+ "wilddatum-local-import",
+ "wilddatum-query",
+ "wkt",
+ "zarrs",
+]
+
+[[package]]
+name = "wilddatum-web"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "uuid",
+ "webbrowser",
+ "wilddatum-core",
+ "wilddatum-rerun",
+ "wilddatum-service",
+]
 
 [[package]]
 name = "winapi"

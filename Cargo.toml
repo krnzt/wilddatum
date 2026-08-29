@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/ecoscope-core",
-  "crates/ecoscope-provider-api",
-  "crates/ecoscope-provider-erddap",
-  "crates/ecoscope-provider-neon",
-  "crates/ecoscope-provider-process",
-  "crates/ecoscope-local-import",
-  "crates/ecoscope-query",
-  "crates/ecoscope-service",
-  "crates/ecoscope-rerun",
-  "crates/ecoscope-web",
-  "crates/ecoscope-mcp",
-  "crates/ecoscope-cli",
+  "crates/wilddatum-core",
+  "crates/wilddatum-provider-api",
+  "crates/wilddatum-provider-erddap",
+  "crates/wilddatum-provider-neon",
+  "crates/wilddatum-provider-process",
+  "crates/wilddatum-local-import",
+  "crates/wilddatum-query",
+  "crates/wilddatum-service",
+  "crates/wilddatum-rerun",
+  "crates/wilddatum-web",
+  "crates/wilddatum-mcp",
+  "crates/wilddatum-cli",
 ]
 
 [workspace.package]
@@ -20,8 +20,8 @@ version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
-repository = "https://github.com/krnzt/ecoscope"
-authors = ["EcoScope contributors"]
+repository = "https://github.com/krnzt/wilddatum"
+authors = ["WildDatum contributors"]
 
 [workspace.dependencies]
 anyhow = "1.0.100"
