@@ -55,8 +55,9 @@ Alpha.3 deepens the human-agent visualization loop before adding another RI.
   results through MCP, CLI, and the browser; unavailable rules never execute.
 - [ ] Highlight derived selections and result series inside Rerun panels while
   preserving exactness and provenance in the browser explorer.
-- [ ] Extract LAS CRS plus NEON HDF5 map/affine metadata and implement the exact
-  point-return → image-pixel → spectrum workflow.
+- [x] Extract LAS WKT/GeoKey CRS plus NEON HDF5 EPSG, map/affine, extent,
+  scale, and no-data metadata; execute point-return → image-pixel → spectrum
+  only when CRS, transform consistency, and footprints prove registration.
 - [ ] Extend profile/trajectory views to multiple values, Parquet/Arrow source
   identity, profile-aware downsampling, and depth/pressure ranges.
 

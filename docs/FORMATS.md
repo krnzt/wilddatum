@@ -11,11 +11,12 @@ suggest-views` / `suggest_views` use the same bounded inventory to propose
 evidence-backed panels and links. `wilddatum create-suggested-view` /
 `create_view_from_suggestion` recompute and persist a chosen suggestion as an
 `EcoViewSpec` v2. `wilddatum resolve-selection-links` /
-`resolve_selection_links` currently executes the exact cube-pixel → spectrum
-resolver and returns bounded wavelength/value rows plus a durable result handle.
-An unresolved CRS, affine transform, QC policy, axis, or wavelength choice
-remains explicit rather than becoming a guessed rendering contract or enabled
-link.
+`resolve_selection_links` executes exact cube-pixel → spectrum resolution and,
+when registration is proven, chained point-return → image-pixel → spectrum
+resolution. It returns derived structured selections, bounded wavelength/value
+rows, and a durable result handle. An unresolved or inconsistent CRS, affine
+transform, footprint, QC policy, axis, or wavelength choice remains explicit
+rather than becoming a guessed rendering contract or enabled link.
 
 | Source | Inspect/import | Scientific query | Rerun rendering | Important bounds or caveats |
 |---|---:|---:|---:|---|
@@ -29,10 +30,10 @@ link.
 | Shapefile | yes | exact spatial predicate | yes | Sidecar metadata is inspected where available; shapes are converted where supported |
 | GeoParquet | yes | exact `ST_Intersects` | not yet | GeoArrow metadata is restored and queried with GeoDataFusion; direct Rerun geometry logging remains open |
 | GeoPackage | generic import | not yet | not yet | Recognized as vector modality but has no SQLite/geometry adapter yet |
-| LAS/LAZ | yes | bbox/class/elevation or verified source row | yes | Sequential spatial scan; rendering samples at most 1,000,000 points and records the stride |
+| LAS/LAZ | yes | bbox/class/elevation or verified source row | yes | Reads WKT or GeoKey EPSG metadata; sequential spatial scan; rendering samples at most 1,000,000 points and records the stride |
 | Provider-authored COPC | yes | indexed octree bbox + level/resolution | yes | Native COPC hierarchy supports LOD selection |
 | WildDatum-derived COPC | yes | indexed full-resolution bbox | yes | Immutable derivative of LAS/LAZ; current writer cannot author provider-quality LOD hierarchy |
-| HDF5/NetCDF-4 | hierarchy + arrays | bounded N-D hyperslab | mapped band/RGB | Arbitrary rank is queryable; rendering currently expects one mapped rank-3 image cube |
+| HDF5/NetCDF-4 | hierarchy + arrays | bounded N-D hyperslab | mapped band/RGB | Reads bounded NEON EPSG/Map_Info/extent/scale/no-data metadata; inconsistent extents disable world-to-pixel linking; rendering expects one mapped rank-3 image cube |
 | NetCDF-3 | variables + dimensions | bounded N-D slice | mapped band/RGB | Pure-Rust reader currently decodes the whole source variable and rejects variables over the safety budget |
 | Zarr v2/v3 directory | hierarchy + arrays | bounded N-D slice | mapped band/RGB | Chunk-aware bounding reads; symbolic links are rejected during fingerprinting |
 | ERDDAP tabledap CSV | remote metadata + approved subset | yes after materialization | tabular/time-series or linked profile/trajectory | Requested variables and six comparison operators are validated; generated subsets have no reliable byte estimate |
@@ -74,6 +75,12 @@ that fixes the two spatial axes and returns every spectral cell. This is the
 agent-readable spectrum behind the displayed pixel, not a value inferred from
 the RGB canvas.
 
+For NEON reflectance HDF5, WildDatum interprets `Map_Info` as a north-up affine
+only after its derived bounds agree with `Spatial_Extent_meters`. It also turns
+the stored `Scale_Factor` divisor into the multiplicative scale carried by the
+cube mapping and preserves `Data_Ignore_Value`. This follows NEON's documented
+[HDF5 reflectance structure and map metadata](https://www.neonscience.org/resources/learning-hub/tutorials/neon-refl-h5-py).
+
 ## Point clouds and display precision
 
 LAS stores scaled integer coordinates while Rerun renders `f32` positions.
@@ -88,6 +95,13 @@ Rerun version, stride, supplied instance ID, and supplied source index. Rerun's
 reported pick position remains useful spatial context, but it is not treated as
 the exact logged point coordinate. Unknown/community Rerun layers fall back to
 a source-precision spatial envelope.
+
+An exact point-cloud → cube link additionally requires matching authoritative
+CRS metadata, an internally consistent cube world-to-pixel transform, and an
+overlapping source footprint. A selected world coordinate is converted to a
+zero-based source pixel using that affine, checked against cube bounds, and
+recorded as a derived selection before spectrum resolution. No coordinate
+reprojection or nearest-neighbor registration is inferred in Alpha.3.
 
 ## Linked trajectories and vertical profiles
 

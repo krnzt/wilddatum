@@ -92,10 +92,13 @@ rules. Existing v1 views remain readable.
 
 For the official NEON teaching pair, WildDatum reads the 107 measured
 wavelengths, selects bands nearest 650/550/450 nm, and ranks a 3D point-cloud +
-RGB + spectrum workspace first. Cube-pixel → spectrum is marked exact. LiDAR
-point → image pixel remains explicitly unavailable until the LAS CRS and HDF5
-world-to-pixel affine metadata are verified; similar-looking bounds are never
-treated as registration.
+RGB + spectrum workspace first. Cube-pixel → spectrum is marked exact. WildDatum
+also extracts LAS WKT/GeoKey CRS metadata and the HDF5 EPSG, `Map_Info`, spatial
+extent, scale factor, and no-data value. The teaching cube's `Map_Info` origin
+disagrees with its declared reflectance extent by 500 m, and its footprint does
+not overlap the teaching LAS tile, so point → image pixel correctly remains
+unavailable for that pair instead of pretending that proximity is
+registration.
 
 Accepted point-cloud + spectral-cube views render through the same pinned Rerun
 adapter and browser explorer as manually created views. The browser reports the
@@ -105,6 +108,13 @@ selection and link rule in its provenance. Unavailable link rules remain
 visible structured state and create no result rather than becoming guessed
 interactions. Link evaluation refuses stale selections after the view revision
 changes.
+
+For datasets with the same authoritative CRS, an internally consistent
+north-up affine transform, and overlapping footprints, an exact point pick can
+now derive the source cube pixel and immediately chain into the complete
+wavelength-aware spectrum. The derived pixel, both link decisions, and the
+spectrum result remain inspectable through the normal MCP, CLI, and browser
+interfaces.
 
 Detailed support and caveats are in the [format matrix](docs/FORMATS.md). Design
 boundaries are documented in [architecture](docs/ARCHITECTURE.md) and

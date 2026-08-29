@@ -45,6 +45,17 @@ reflectance array and wavelength coordinate make the axis roles unambiguous.
 The same cube contract now drives HDF5/NetCDF-4, NetCDF-3, and Zarr queries and
 Rerun previews; `configure_cube_view` is the provider-neutral path.
 
+## Geospatial links must prove registration
+
+Matching file types or visually similar bounds do not establish cross-sensor
+registration. WildDatum enables exact point-cloud → image-pixel links only when
+both layers declare the same authoritative CRS, the cube supplies a supported
+and internally consistent world-to-pixel transform, and their footprints
+overlap. It fails closed when NEON `Map_Info` and `Spatial_Extent_meters`
+disagree, retaining both values and the warning for scientific review. The
+current resolver does not silently reproject, snap to a nearest pixel, or infer
+an offset.
+
 ## Language-neutral community providers
 
 The shared provider contract is JSON, not a Rust dynamic-library ABI. Built-in

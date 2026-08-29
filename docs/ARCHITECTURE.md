@@ -77,19 +77,23 @@ the existing Rerun renderer. Missing v2 fields use empty defaults so persisted
 v1 views continue to deserialize and render.
 
 `resolve_selection_links` evaluates only rules that match the durable source
-selection and the source panel's dataset. The first executable resolver is the
-exact cube-pixel → spectrum mapping. Its query result stores the source
-selection and link rule as provenance, and the browser presents the bounded
-spectrum preview after a real Rerun pick. Rules marked `unavailable` are
-returned as structured state without executing a query. Unknown resolvers,
-non-exact executable rules, mismatched arrays, and selections recorded against
-an older view revision fail closed.
+selection and the source panel's dataset. Exact cube-pixel → spectrum mapping
+stores the source selection and link rule in result provenance, and the browser
+presents the bounded spectrum preview after a real Rerun pick. Exact
+point-return → image-pixel resolution first verifies identical authoritative
+CRS, an internally consistent north-up affine transform, and footprint bounds.
+It records the derived `CubePixel`, then chains that structured selection
+through the existing spectrum resolver. Rules marked `unavailable` are returned
+as structured state without executing a query. Unknown resolvers, non-exact
+executable rules, mismatched arrays, out-of-bounds coordinates, and selections
+recorded against an older view revision fail closed.
 
 The first multimodal recipe combines point-cloud, wavelength-aware RGB, and
 spectrum panels. RGB bands are selected from inspected wavelength coordinates,
 not institution-specific indices. Cube-pixel-to-spectrum can be exact from
-array axes alone. Point-to-pixel linking remains unavailable until both source
-CRS and the cube's world-to-pixel transform are authoritative.
+array axes alone. Point-to-pixel linking becomes exact only when source CRS,
+cube world-to-pixel transform, transform consistency, and spatial overlap are
+authoritative; otherwise the suggested link explains why it is unavailable.
 
 ## Rerun boundary
 
