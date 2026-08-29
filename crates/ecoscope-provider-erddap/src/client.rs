@@ -36,6 +36,10 @@ impl ErddapClient {
         self
     }
 
+    pub fn base_url(&self) -> &Url {
+        &self.base_url
+    }
+
     pub async fn search(&self, query: &str, limit: u32) -> Result<Vec<SearchRecord>> {
         let mut url = self.endpoint(&["search", "index.json"])?;
         url.query_pairs_mut()

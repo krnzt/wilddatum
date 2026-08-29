@@ -3,10 +3,11 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use ecoscope_core::{
     CatalogEntry, CatalogQuery, CredentialRef, DatasetManifest, DatasetPlan, DatasetRequest,
-    EcoScopeError, GeoGeometry, Modality, ProviderCapability, ProviderKind, ProviderManifest,
-    ProviderStatus, ResourceKind, ResourceQuery, ResourceRecord, Result,
+    EcoScopeError, GeoGeometry, Modality, PlanId, PlannedFile, ProviderCapability, ProviderKind,
+    ProviderManifest, ProviderStatus, ResourceKind, ResourceQuery, ResourceRecord, Result,
 };
 use ecoscope_provider_api::{EcologicalDataProvider, PROVIDER_PROTOCOL_VERSION};
 use serde_json::{Value, json};
@@ -14,11 +15,13 @@ use serde_json::{Value, json};
 use crate::{
     client::ErddapClient,
     config::ErddapConfig,
+    query::{Constraint, ErddapOptions, Protocol, build_subset},
     table::{InfoMetadata, SearchRecord},
 };
 
 pub mod client;
 pub mod config;
+pub mod query;
 pub mod table;
 
 #[derive(Clone)]
@@ -251,10 +254,116 @@ impl EcologicalDataProvider for ErddapProvider {
         self.resolved_resource(record, info)
     }
 
-    async fn plan_dataset(&self, _request: DatasetRequest) -> Result<DatasetPlan> {
-        Err(EcoScopeError::Invalid(
-            "ERDDAP subset planning is not available yet".into(),
-        ))
+    async fn plan_dataset(&self, request: DatasetRequest) -> Result<DatasetPlan> {
+        if request.provider != ProviderKind::Other(self.config.provider_id.clone()) {
+            return Err(EcoScopeError::Invalid(format!(
+                "request provider does not match {}",
+                self.config.provider_id
+            )));
+        }
+        if request.spatial_filter.is_some() {
+            return Err(EcoScopeError::Invalid(
+                "generic ERDDAP spatial filters must be expressed as explicit constraints".into(),
+            ));
+        }
+        if !request.locations.is_empty() {
+            return Err(EcoScopeError::Invalid(
+                "generic ERDDAP locations must be expressed as explicit constraints".into(),
+            ));
+        }
+        let mut options: ErddapOptions = serde_json::from_value(serde_json::to_value(
+            &request.provider_options,
+        )?)
+        .map_err(|error| EcoScopeError::Invalid(format!("invalid ERDDAP options: {error}")))?;
+        if options.protocol == Protocol::Tabledap
+            && let Some(start) = &request.temporal_start
+            && !options.constraints.iter().any(|constraint| {
+                constraint.variable == "time" && matches!(constraint.op.as_str(), "gt" | "gte")
+            })
+        {
+            options.constraints.push(Constraint {
+                variable: "time".into(),
+                op: "gte".into(),
+                value: Value::String(start.clone()),
+            });
+        }
+        if options.protocol == Protocol::Tabledap
+            && let Some(end) = &request.temporal_end
+            && !options.constraints.iter().any(|constraint| {
+                constraint.variable == "time" && matches!(constraint.op.as_str(), "lt" | "lte")
+            })
+        {
+            options.constraints.push(Constraint {
+                variable: "time".into(),
+                op: "lte".into(),
+                value: Value::String(end.clone()),
+            });
+        }
+        let search_record = self
+            .search_records(&request.resource_id, 100)
+            .await?
+            .into_iter()
+            .find(|record| record.dataset_id == request.resource_id)
+            .ok_or_else(|| EcoScopeError::NotFound(request.resource_id.clone()))?;
+        match options.protocol {
+            Protocol::Tabledap if search_record.tabledap_url.is_none() => {
+                return Err(EcoScopeError::Invalid(format!(
+                    "{} does not advertise tabledap access",
+                    request.resource_id
+                )));
+            }
+            Protocol::Griddap if search_record.griddap_url.is_none() => {
+                return Err(EcoScopeError::Invalid(format!(
+                    "{} does not advertise griddap access",
+                    request.resource_id
+                )));
+            }
+            _ => {}
+        }
+        let info = self.client.info(&request.resource_id).await?;
+        let available_variables = info.variables.keys().cloned().collect();
+        let subset = build_subset(
+            self.client.base_url(),
+            &request.resource_id,
+            &request.variables,
+            &available_variables,
+            &options,
+        )?;
+        let file = PlannedFile {
+            provider_id: self.config.provider_id.clone(),
+            name: subset.filename,
+            size_bytes: None,
+            checksum: None,
+            download_url: Some(subset.url.to_string()),
+            location: None,
+            temporal_partition: None,
+            metadata: BTreeMap::from([
+                ("protocol".into(), json!(options.protocol)),
+                ("output_format".into(), json!(options.output_format)),
+                ("decoded_query".into(), Value::String(subset.expression)),
+            ]),
+            expires_at: None,
+        };
+        let mut warnings = vec![
+            "This generated ERDDAP subset may change upstream; materialization freezes the bytes with a local BLAKE3 checksum"
+                .into(),
+        ];
+        if request.release.is_some() {
+            warnings.push("ERDDAP does not apply EcoScope's release field to subset URLs".into());
+        }
+        DatasetPlan {
+            plan_id: PlanId::new(),
+            request,
+            plan_hash: String::new(),
+            file_count: 1,
+            estimated_bytes: None,
+            files: vec![file],
+            warnings,
+            requires_credentials: false,
+            created_at: Utc::now(),
+            approved_at: None,
+        }
+        .finalize()
     }
 
     async fn materialize(
