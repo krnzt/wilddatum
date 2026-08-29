@@ -94,9 +94,18 @@ fields survive in `provider_extensions` and `raw_metadata`. Additional Research
 Infrastructures therefore extend the provider registry without creating a new
 MCP tool family or pretending that every RI has NEON's product/site/month model.
 
+Canonical materialization records use `resource_id`, `resource_version`,
+`locations`, temporal bounds, spatial geometry, variables, and
+`provider_options`. Native identifiers such as NEON `productCode` or ERDDAP
+`datasetID` exist only inside their adapters. The executable contract is defined
+by the [dataset request v2](../schemas/dataset-request-v2.schema.json) and
+[provider manifest v2](../schemas/provider-manifest-v2.schema.json) schemas.
+Serde aliases keep persisted alpha JSON readable without emitting the old names
+or accepting protocol-v1 provider executables.
+
 The built-in NEON adapter is Rust because it owns credential brokerage,
 streaming downloads, and checksum validation. Community adapters can instead be
-executables written in any language. They negotiate a v1 manifest and exchange
+executables written in any language. They negotiate a v2 manifest and exchange
 bounded newline-delimited JSON-RPC over stdin/stdout. Requests are serialized,
 time-limited, response-size-limited, and identity-checked. Planned download
 URLs are rejected unless their exact HTTPS origin appears in the negotiated

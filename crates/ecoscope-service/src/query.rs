@@ -295,7 +295,7 @@ impl EcoScopeService {
                         {
                             "@id": "./",
                             "@type": "Dataset",
-                            "name": manifest.product_code,
+                            "name": manifest.resource_id,
                             "identifier": result.dataset_id,
                             "citation": manifest.citation,
                             "license": manifest.license,

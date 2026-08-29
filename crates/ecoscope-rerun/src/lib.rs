@@ -136,7 +136,7 @@ pub fn write_recording(
                 &entity_root,
                 format!(
                     "{} is catalogued as {:?}. Set an explicit axis/band mapping before a derived preview is rendered.",
-                    manifest.product_code, layer.modality
+                    manifest.resource_id, layer.modality
                 ),
             )?;
         }

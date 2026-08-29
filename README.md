@@ -58,9 +58,9 @@ row; for a mapped cube, an image click maps back to the complete source spectrum
   and mapped scientific cubes.
 - Durable human selections that can be converted into provenance-linked source
   queries and exported as CSV, Parquet, COG, or RO-Crate where applicable.
-- Language-neutral community provider subprocesses with a versioned JSON-RPC
-  contract; an RI contributor can work in Rust, Python, R, Go, or another
-  language without adding provider-specific MCP tools.
+- Language-neutral community provider subprocesses with a provider-neutral v2
+  JSON-RPC contract; an RI contributor can work in Rust, Python, R, Go, or
+  another language without adding provider-specific MCP tools.
 
 Detailed support and caveats are in the [format matrix](docs/FORMATS.md). Design
 boundaries are documented in [architecture](docs/ARCHITECTURE.md) and
@@ -196,7 +196,11 @@ Installation performs a protocol handshake and validates provider identity,
 capabilities, response bounds, and declared HTTPS origins. Provider executables
 are trusted local code, not sandboxed plugins, and never receive credential
 values. See the [provider SDK](docs/PROVIDER_SDK.md) for the complete wire
-contract, conformance fixture, and security model.
+contract, conformance fixture, and security model. The canonical
+[`DatasetRequest` v2](schemas/dataset-request-v2.schema.json) and
+[provider manifest v2](schemas/provider-manifest-v2.schema.json) schemas keep
+RI-native names inside adapters while `plan_materialization` exposes one typed
+MCP input across providers.
 
 ## Known limitations
 

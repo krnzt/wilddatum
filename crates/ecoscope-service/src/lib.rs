@@ -304,12 +304,12 @@ impl EcoScopeService {
         let manifest = DatasetManifest {
             dataset_id: DatasetId::new(),
             provider: ProviderKind::Local,
-            product_code: inspection.display_name.clone(),
-            product_revision: Some(inspection.fingerprint.value.clone()),
+            resource_id: inspection.display_name.clone(),
+            resource_version: Some(inspection.fingerprint.value.clone()),
             modalities: inspection.modalities.clone(),
-            sites: vec![],
-            start_month: None,
-            end_month: None,
+            locations: vec![],
+            temporal_start: None,
+            temporal_end: None,
             release: None,
             package: None,
             include_provisional: false,
@@ -321,8 +321,8 @@ impl EcoScopeService {
                 size_bytes: inspection.size_bytes,
                 checksum: inspection.fingerprint.clone(),
                 media_type: inspection.media_type.clone(),
-                site: None,
-                month: None,
+                location: None,
+                temporal_partition: None,
                 metadata: inspection.metadata.clone(),
             }],
             transformations: vec![],
@@ -366,6 +366,7 @@ impl EcoScopeService {
                 doi: None,
                 url: None,
             }),
+            provider_metadata: BTreeMap::new(),
             created_at: Utc::now(),
         };
         self.save_manifest(&manifest)?;
@@ -643,7 +644,7 @@ impl EcoScopeService {
             layers.push(EcoLayer {
                 id: format!("layer_{}", index + 1),
                 dataset_id: dataset_id.clone(),
-                name: manifest.product_code,
+                name: manifest.resource_id,
                 modality,
                 visible: true,
                 opacity: 1.0,
@@ -1006,6 +1007,46 @@ mod tests {
         let preview = service.preview_dataset(&manifest.dataset_id.0, 10).unwrap();
         assert_eq!(preview["returned_rows"], 1);
         assert_eq!(service.list_manifests().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reads_alpha_manifest_json_from_the_state_database() {
+        let (_directory, service) = service();
+        let legacy = json!({
+            "dataset_id": "ds_legacy",
+            "provider": "local",
+            "product_code": "observations.csv",
+            "product_revision": "blake3-alpha",
+            "modalities": ["tabular"],
+            "sites": [],
+            "start_month": null,
+            "end_month": null,
+            "release": null,
+            "package": null,
+            "include_provisional": false,
+            "source_files": [],
+            "transformations": [],
+            "format": null,
+            "spatial_reference": null,
+            "cube": null,
+            "cubes": [],
+            "license": null,
+            "citation": null,
+            "created_at": "2026-01-01T00:00:00Z"
+        });
+        service
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO datasets(id, json, created_at) VALUES(?1, ?2, ?3)",
+                params!["ds_legacy", legacy.to_string(), "2026-01-01T00:00:00Z"],
+            )
+            .unwrap();
+
+        let manifest = service.get_manifest("ds_legacy").unwrap();
+        assert_eq!(manifest.resource_id, "observations.csv");
+        assert!(manifest.locations.is_empty());
+        assert!(manifest.provider_metadata.is_empty());
     }
 
     #[tokio::test]

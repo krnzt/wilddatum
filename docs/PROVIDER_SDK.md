@@ -18,6 +18,7 @@ clears the subprocess environment, including `PATH`.
 ```json
 {
   "schema_version": 1,
+  "protocol_version": 2,
   "expected_provider_id": "my-ri",
   "command": "/usr/bin/python3",
   "args": ["/absolute/path/my_ri_provider.py"],
@@ -48,18 +49,18 @@ EcoScope sends one JSON object per line and expects exactly one response line
 with the same request ID:
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"provider.handshake","params":{"protocol_version":1,"client":"ecoscope","credential_transport":"none"}}
+{"jsonrpc":"2.0","id":1,"method":"provider.handshake","params":{"protocol_version":2,"client":"ecoscope","credential_transport":"none"}}
 ```
 
 The result is a manifest matching
-[`provider-manifest-v1.schema.json`](../schemas/provider-manifest-v1.schema.json):
+[`provider-manifest-v2.schema.json`](../schemas/provider-manifest-v2.schema.json):
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "schema_version": 1,
+    "schema_version": 2,
     "provider_id": "my-ri",
     "name": "My Research Infrastructure",
     "version": "0.1.0",
@@ -108,6 +109,12 @@ EcoScope rejects invalid JSON, a mismatched version or request ID, a missing
 result, responses over the configured byte limit, and calls exceeding the
 configured timeout. Calls on one provider process are serialized.
 
+The configuration file remains schema v1, but `protocol_version` is negotiated
+independently and must be 2. Protocol-v1 executables are not accepted. EcoScope
+continues to read persisted alpha-era request, plan, source-file, and manifest
+JSON through explicit aliases; that storage compatibility does not make v1 a
+supported provider wire protocol.
+
 ## Capability contract
 
 | Capability | Expected operation |
@@ -129,10 +136,39 @@ and planning-only provider is valid and immediately useful.
 ## Planning and materialization
 
 Planning must be deterministic and non-mutating. A provider returns file names,
-sizes, checksums, public download URLs, time/site information, warnings, and
-whether credentials are required. EcoScope finalizes the plan to create its
+sizes, checksums, public download URLs, temporal/location information, warnings,
+and whether credentials are required. EcoScope finalizes the plan to create its
 stable BLAKE3 approval hash and rejects every planned URL outside the manifest's
 exact origin allowlist.
+
+`datasets.plan` receives a request matching
+[`dataset-request-v2.schema.json`](../schemas/dataset-request-v2.schema.json).
+Provider-native selection state belongs in `provider_options`; the shared
+fields are not renamed to match a particular RI:
+
+```json
+{
+  "provider": {"other": "emso"},
+  "resource_id": "OBSEA_moored_buoy_BGC_L1c",
+  "locations": ["OBSEA"],
+  "temporal_start": "2025-01-01T00:00:00Z",
+  "temporal_end": "2025-01-31T23:59:59Z",
+  "spatial_filter": null,
+  "variables": ["time", "temperature"],
+  "release": null,
+  "package": "csv",
+  "include_provisional": false,
+  "provider_options": {
+    "protocol": "tabledap",
+    "constraints": []
+  }
+}
+```
+
+Adapters translate `resource_id`, locations, temporal bounds, spatial geometry,
+variables, and options into provider-native parameters. For example, only the
+NEON adapter knows that `resource_id` becomes `productCode` and `locations`
+become `siteCodes`.
 
 Community subprocess materialization is currently limited to public plans. The
 subprocess receives the approved plan but no credential values. If
@@ -193,7 +229,7 @@ impl EcologicalDataProvider for MyInfrastructure {
 }
 ```
 
-The executable `ecoscope-provider-fixture` and its integration test form the v1
+The executable `ecoscope-provider-fixture` and its integration test form the v2
 wire-protocol conformance example. Provider tests should cover handshake
 validation, representative metadata, a dry-run plan, out-of-allowlist URL
 rejection, checksum failure, and one successful materialization without live

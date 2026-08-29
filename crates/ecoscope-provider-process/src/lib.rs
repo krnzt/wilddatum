@@ -30,11 +30,14 @@ use url::Url;
 
 pub const DEFAULT_RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub const PROVIDER_CONFIG_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessProviderConfig {
-    #[serde(default = "default_protocol_version")]
+    #[serde(default = "default_config_version")]
     pub schema_version: u32,
+    #[serde(default = "default_protocol_version")]
+    pub protocol_version: u32,
     pub expected_provider_id: String,
     pub command: PathBuf,
     #[serde(default)]
@@ -43,6 +46,10 @@ pub struct ProcessProviderConfig {
     pub timeout_ms: u64,
     #[serde(default = "default_response_limit")]
     pub response_limit_bytes: usize,
+}
+
+fn default_config_version() -> u32 {
+    PROVIDER_CONFIG_VERSION
 }
 
 fn default_protocol_version() -> u32 {
@@ -60,24 +67,35 @@ fn default_response_limit() -> usize {
 impl ProcessProviderConfig {
     pub fn from_file(path: &Path) -> Result<Self> {
         let config: Self = serde_json::from_reader(std::fs::File::open(path)?)?;
-        if !config.command.is_absolute() {
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if !self.command.is_absolute() {
             return Err(EcoScopeError::Invalid(format!(
-                "provider command in {} must be an absolute path",
-                path.display()
+                "provider command must be an absolute path: {}",
+                self.command.display()
             )));
         }
-        if config.schema_version != PROVIDER_PROTOCOL_VERSION {
+        if self.schema_version != PROVIDER_CONFIG_VERSION {
             return Err(EcoScopeError::Invalid(format!(
                 "provider configuration uses unsupported schema version {}",
-                config.schema_version
+                self.schema_version
             )));
         }
-        if config.timeout_ms == 0 || config.response_limit_bytes < 1024 {
+        if self.protocol_version != PROVIDER_PROTOCOL_VERSION {
+            return Err(EcoScopeError::Invalid(format!(
+                "provider configuration requests unsupported protocol version {}",
+                self.protocol_version
+            )));
+        }
+        if self.timeout_ms == 0 || self.response_limit_bytes < 1024 {
             return Err(EcoScopeError::Invalid(
                 "provider timeout must be positive and response limit at least 1024 bytes".into(),
             ));
         }
-        Ok(config)
+        Ok(())
     }
 }
 
@@ -125,6 +143,7 @@ pub struct ProcessProvider {
 
 impl ProcessProvider {
     pub async fn spawn(config: ProcessProviderConfig) -> Result<Self> {
+        config.validate()?;
         let mut command = Command::new(&config.command);
         command
             .args(&config.args)
@@ -161,7 +180,7 @@ impl ProcessProvider {
             config.response_limit_bytes,
             "provider.handshake",
             json!({
-                "protocol_version": PROVIDER_PROTOCOL_VERSION,
+                "protocol_version": config.protocol_version,
                 "client": "ecoscope",
                 "credential_transport": "none"
             }),

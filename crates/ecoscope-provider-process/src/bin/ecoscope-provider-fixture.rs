@@ -49,18 +49,19 @@ fn main() {
             }
             "datasets.materialize" => {
                 let plan: DatasetPlan = serde_json::from_value(params["plan"].clone()).unwrap();
+                let request = plan.request;
                 serde_json::to_value(DatasetManifest {
                     dataset_id: DatasetId::new(),
-                    provider: plan.request.provider,
-                    product_code: plan.request.product_code,
-                    product_revision: None,
+                    provider: request.provider,
+                    resource_id: request.resource_id,
+                    resource_version: None,
                     modalities: vec![],
-                    sites: plan.request.sites,
-                    start_month: plan.request.start_month,
-                    end_month: plan.request.end_month,
-                    release: plan.request.release,
-                    package: Some(plan.request.package),
-                    include_provisional: plan.request.include_provisional,
+                    locations: request.locations,
+                    temporal_start: request.temporal_start,
+                    temporal_end: request.temporal_end,
+                    release: request.release,
+                    package: Some(request.package),
+                    include_provisional: request.include_provisional,
                     source_files: vec![],
                     transformations: vec![],
                     format: None,
@@ -69,6 +70,7 @@ fn main() {
                     cubes: vec![],
                     license: None,
                     citation: None,
+                    provider_metadata: request.provider_options,
                     created_at: Utc::now(),
                 })
                 .unwrap()
@@ -92,7 +94,7 @@ fn main() {
 
 fn manifest() -> ProviderManifest {
     ProviderManifest {
-        schema_version: 1,
+        schema_version: 2,
         provider_id: "fixture".into(),
         name: "EcoScope conformance fixture".into(),
         version: "0.1.0".into(),
@@ -105,7 +107,7 @@ fn manifest() -> ProviderManifest {
         ],
         allowed_network_origins: vec!["https://example.org".into()],
         authentication: vec![],
-        standards: vec!["EcoScope provider protocol v1".into()],
+        standards: vec!["EcoScope provider protocol v2".into()],
         homepage: None,
         support_url: None,
     }
