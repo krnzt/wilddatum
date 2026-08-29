@@ -875,6 +875,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dataset_request_uses_provider_neutral_v2_names() {
+        let request = DatasetRequest {
+            provider: ProviderKind::Other("emso".into()),
+            resource_id: "OBSEA_moored_buoy_BGC_L1c".into(),
+            locations: vec!["OBSEA".into()],
+            temporal_start: Some("2025-01-01T00:00:00Z".into()),
+            temporal_end: Some("2025-01-31T23:59:59Z".into()),
+            spatial_filter: None,
+            variables: vec!["time".into(), "temperature".into()],
+            release: None,
+            package: "csv".into(),
+            include_provisional: false,
+            provider_options: BTreeMap::from([(
+                "protocol".into(),
+                Value::String("tabledap".into()),
+            )]),
+        };
+        let value = serde_json::to_value(request).unwrap();
+        assert_eq!(value["resource_id"], "OBSEA_moored_buoy_BGC_L1c");
+        assert_eq!(value["locations"][0], "OBSEA");
+        assert!(value.get("product_code").is_none());
+        assert!(value.get("sites").is_none());
+        assert!(value.get("start_month").is_none());
+    }
+
+    #[test]
+    fn dataset_request_reads_v1_alpha_names() {
+        let request: DatasetRequest = serde_json::from_value(serde_json::json!({
+            "provider": "neon",
+            "product_code": "DP1.00094.001",
+            "sites": ["HARV"],
+            "start_month": "2024-01",
+            "end_month": "2024-02",
+            "release": "RELEASE-2025",
+            "package": "basic",
+            "include_provisional": false
+        }))
+        .unwrap();
+        assert_eq!(request.resource_id, "DP1.00094.001");
+        assert_eq!(request.locations, vec!["HARV"]);
+        assert_eq!(request.temporal_start.as_deref(), Some("2024-01"));
+        assert!(request.variables.is_empty());
+        assert!(request.provider_options.is_empty());
+    }
+
+    #[test]
     fn ids_are_prefixed_and_unique() {
         let first = DatasetId::new();
         let second = DatasetId::new();
