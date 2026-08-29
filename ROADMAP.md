@@ -35,7 +35,7 @@ RIs instead of adding institution-specific MCP tools.
   materialization, license, citation, and provenance capture.
 - [x] Ship maintained presets for EMSO ERIC, the public ICOS ERDDAP surface,
   and Euro-Argo/Argo data served by Ifremer.
-- [ ] Add linked trajectory-map and vertical-profile Rerun views with exact
+- [x] Add linked trajectory-map and vertical-profile Rerun views with exact
   source-row selection and QC-aware configuration.
 - [x] Add synthetic fixtures and opt-in live smoke tests for all three public
   services; normal CI remains deterministic and offline.

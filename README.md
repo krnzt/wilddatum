@@ -22,7 +22,7 @@ provider-independent manifest, query, view, selection, and provenance model.
 
 _A real WildDatum browser session using Rerun Web Viewer: a 6.6-million-point
 NEON LAS tile, a 500×500×107 reflectance cube, immutable provenance, and a
-verified selection mapped back to LAS source row 1,800,316._
+verified selection mapped back to LAS source row 2,543,044._
 
 <!-- mcp-name: io.github.krnzt/wilddatum -->
 
