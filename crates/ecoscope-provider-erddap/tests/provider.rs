@@ -16,8 +16,28 @@ use ecoscope_provider_erddap::{ErddapProvider, config::ErddapConfig};
 use serde_json::Value;
 
 async fn fixture_server() -> ErddapConfig {
+    let target_app = Router::new().route(
+        "/erddap/tabledap/ArgoFloats.csv",
+        get(|| async {
+            let chunks = futures::stream::iter([
+                Ok::<_, std::convert::Infallible>(Bytes::from_static(b"time,temp\n")),
+                Ok(Bytes::from_static(b"2025-01-01T00:00:00Z,12.5\n")),
+                Ok(Bytes::from_static(b"2025-01-01T01:00:00Z,12.8\n")),
+            ]);
+            Response::builder()
+                .header("content-type", "text/csv")
+                .header("etag", "fixture-etag")
+                .header("last-modified", "Thu, 28 Aug 2026 12:00:00 GMT")
+                .body(Body::from_stream(chunks))
+                .unwrap()
+        }),
+    );
+    let target_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_address = target_listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(target_listener, target_app).await.unwrap() });
     let search: Value = serde_json::from_str(include_str!("fixtures/search.json")).unwrap();
     let info: Value = serde_json::from_str(include_str!("fixtures/info.json")).unwrap();
+    let redirect_base = format!("http://{target_address}/erddap/tabledap/ArgoFloats.csv");
     let app = Router::new()
         .route(
             "/erddap/search/index.json",
@@ -35,21 +55,22 @@ async fn fixture_server() -> ErddapConfig {
         )
         .route(
             "/erddap/tabledap/ArgoFloats.csv",
-            get(|| async {
-                let chunks = futures::stream::iter([
-                    Ok::<_, std::convert::Infallible>(Bytes::from_static(b"time,temp\n")),
-                    Ok(Bytes::from_static(b"2025-01-01T00:00:00Z,12.5\n")),
-                    Ok(Bytes::from_static(b"2025-01-01T01:00:00Z,12.8\n")),
-                ]);
-                Response::builder()
-                    .header("content-type", "text/csv")
-                    .header("etag", "fixture-etag")
-                    .header("last-modified", "Thu, 28 Aug 2026 12:00:00 GMT")
-                    .body(Body::from_stream(chunks))
-                    .unwrap()
+            get(move |uri: axum::http::Uri| {
+                let redirect_base = redirect_base.clone();
+                async move {
+                    let redirect_location = uri
+                        .query()
+                        .map(|query| format!("{redirect_base}?{query}"))
+                        .unwrap_or(redirect_base);
+                    Response::builder()
+                        .status(307)
+                        .header("location", redirect_location)
+                        .body(Body::empty())
+                        .unwrap()
+                }
             }),
         )
-        .route("/erddap/version", get(|| async { "2.28" }));
+        .route("/erddap/version", get(|| async { "ERDDAP_version=2.28" }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -206,6 +227,10 @@ async fn plan_builds_a_validated_public_subset() {
     assert_eq!(file.provider_id, "fixture-erddap");
     assert_eq!(file.name, "ArgoFloats.csv");
     assert_eq!(
+        file.metadata["redirect_chain"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
         file.metadata["decoded_query"],
         "time,latitude,longitude,temp&time>=2025-01-01T00:00:00Z&time<=2025-01-02T00:00:00Z"
     );
@@ -358,6 +383,10 @@ async fn materialize_leaves_no_object_after_an_http_failure() {
         .unwrap();
     let original = plan.files[0].download_url.as_ref().unwrap();
     plan.files[0].download_url = Some(original.replace("ArgoFloats.csv", "Missing.csv"));
+    let missing_url = plan.files[0].download_url.clone();
+    plan.files[0]
+        .metadata
+        .insert("redirect_chain".into(), serde_json::json!([missing_url]));
     plan = plan.finalize().unwrap();
     plan.approved_at = Some(Utc::now());
 

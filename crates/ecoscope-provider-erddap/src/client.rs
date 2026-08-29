@@ -23,6 +23,7 @@ pub struct DownloadResult {
     pub digest: String,
     pub size_bytes: u64,
     pub metadata: DownloadMetadata,
+    pub final_url: Url,
 }
 
 #[derive(Clone)]
@@ -39,6 +40,7 @@ impl ErddapClient {
         validate_base_url(&base_url)?;
         let client = Client::builder()
             .user_agent(concat!("ecoscope/", env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|error| EcoScopeError::Internal(error.to_string()))?;
         Ok(Self {
@@ -94,7 +96,11 @@ impl ErddapClient {
             .text()
             .await
             .map_err(|error| EcoScopeError::Internal(error.to_string()))?;
-        let version = text.trim();
+        let version = text
+            .trim()
+            .strip_prefix("ERDDAP_version=")
+            .unwrap_or(text.trim())
+            .trim();
         if version.is_empty() || version.len() > 65_536 {
             return Err(EcoScopeError::Invalid(
                 "ERDDAP returned an invalid server version".into(),
@@ -103,9 +109,41 @@ impl ErddapClient {
         Ok(version.to_owned())
     }
 
+    pub async fn resolve_download_chain(&self, url: &Url) -> Result<Vec<Url>> {
+        let mut chain = vec![url.clone()];
+        for _ in 0..5 {
+            let current = chain.last().expect("download chain is never empty");
+            let response = self
+                .client
+                .head(current.clone())
+                .send()
+                .await
+                .map_err(|error| {
+                    EcoScopeError::Internal(format!("ERDDAP subset probe failed: {error}"))
+                })?;
+            if response.status().is_redirection() {
+                let next = redirect_location(current, response.headers())?;
+                validate_redirect_target(url, &next)?;
+                chain.push(next);
+                continue;
+            }
+            if response.status().is_success() || response.status() == StatusCode::METHOD_NOT_ALLOWED
+            {
+                return Ok(chain);
+            }
+            return Err(EcoScopeError::Internal(format!(
+                "ERDDAP subset probe returned {}",
+                response.status()
+            )));
+        }
+        Err(EcoScopeError::Invalid(
+            "ERDDAP subset exceeded five redirects".into(),
+        ))
+    }
+
     pub async fn download_to_partial<F>(
         &self,
-        url: &Url,
+        redirect_chain: &[Url],
         partial: &Path,
         should_cancel: &F,
     ) -> Result<DownloadResult>
@@ -115,16 +153,44 @@ impl ErddapClient {
         if should_cancel() {
             return Err(EcoScopeError::Conflict("materialization cancelled".into()));
         }
-        let response =
-            self.client.get(url.clone()).send().await.map_err(|error| {
+        let initial = redirect_chain
+            .first()
+            .ok_or_else(|| EcoScopeError::Invalid("ERDDAP redirect chain is empty".into()))?;
+        let mut successful_response = None;
+        for (index, url) in redirect_chain.iter().enumerate() {
+            let response = self.client.get(url.clone()).send().await.map_err(|error| {
                 EcoScopeError::Internal(format!("ERDDAP download failed: {error}"))
             })?;
-        if !response.status().is_success() {
-            return Err(EcoScopeError::Internal(format!(
-                "ERDDAP download returned {}",
-                response.status()
-            )));
+            if response.status().is_redirection() {
+                let actual = redirect_location(url, response.headers())?;
+                let expected = redirect_chain.get(index + 1).ok_or_else(|| {
+                    EcoScopeError::Conflict(
+                        "ERDDAP returned an unapproved redirect; create a new plan".into(),
+                    )
+                })?;
+                if &actual != expected {
+                    return Err(EcoScopeError::Conflict(
+                        "ERDDAP redirect changed after approval; create a new plan".into(),
+                    ));
+                }
+                continue;
+            }
+            if !response.status().is_success() {
+                return Err(EcoScopeError::Internal(format!(
+                    "ERDDAP download returned {}",
+                    response.status()
+                )));
+            }
+            if index + 1 != redirect_chain.len() {
+                return Err(EcoScopeError::Conflict(
+                    "ERDDAP redirect chain changed after approval; create a new plan".into(),
+                ));
+            }
+            successful_response = Some(response);
         }
+        let response = successful_response.ok_or_else(|| {
+            EcoScopeError::Conflict("ERDDAP download did not reach an approved endpoint".into())
+        })?;
         let metadata = DownloadMetadata {
             etag: header_string(response.headers(), reqwest::header::ETAG),
             last_modified: header_string(response.headers(), reqwest::header::LAST_MODIFIED),
@@ -156,6 +222,10 @@ impl ErddapClient {
                 digest: hasher.finalize().to_hex().to_string(),
                 size_bytes,
                 metadata,
+                final_url: redirect_chain
+                    .last()
+                    .cloned()
+                    .unwrap_or_else(|| initial.clone()),
             })
         }
         .await;
@@ -239,21 +309,42 @@ fn header_string(
         .map(str::to_owned)
 }
 
+fn redirect_location(current: &Url, headers: &reqwest::header::HeaderMap) -> Result<Url> {
+    let location = headers
+        .get(reqwest::header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| EcoScopeError::Invalid("ERDDAP redirect omitted Location".into()))?;
+    current
+        .join(location)
+        .map_err(|error| EcoScopeError::Invalid(format!("invalid ERDDAP redirect: {error}")))
+}
+
+pub fn validate_redirect_target(initial: &Url, target: &Url) -> Result<()> {
+    if !target.username().is_empty() || target.password().is_some() {
+        return Err(EcoScopeError::Invalid(
+            "ERDDAP redirect must not contain credentials".into(),
+        ));
+    }
+    if !secure_or_loopback(target) {
+        return Err(EcoScopeError::Invalid(
+            "ERDDAP redirect must use HTTPS".into(),
+        ));
+    }
+    if target.path() != initial.path() || target.query() != initial.query() {
+        return Err(EcoScopeError::Invalid(
+            "ERDDAP redirect changed the approved subset path or query".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_base_url(url: &Url) -> Result<()> {
     if !url.username().is_empty() || url.password().is_some() {
         return Err(EcoScopeError::Invalid(
             "ERDDAP base URL must not contain credentials".into(),
         ));
     }
-    let secure = url.scheme() == "https";
-    let loopback = url.scheme() == "http"
-        && match url.host() {
-            Some(Host::Ipv4(address)) => address.is_loopback(),
-            Some(Host::Ipv6(address)) => address.is_loopback(),
-            Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-            None => false,
-        };
-    if !secure && !loopback {
+    if !secure_or_loopback(url) {
         return Err(EcoScopeError::Invalid(
             "ERDDAP requires HTTPS; HTTP is allowed only for loopback tests".into(),
         ));
@@ -264,4 +355,46 @@ fn validate_base_url(url: &Url) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn secure_or_loopback(url: &Url) -> bool {
+    let secure = url.scheme() == "https";
+    let loopback = url.scheme() == "http"
+        && match url.host() {
+            Some(Host::Ipv4(address)) => address.is_loopback(),
+            Some(Host::Ipv6(address)) => address.is_loopback(),
+            Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+            None => false,
+        };
+    secure || loopback
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn federation_redirects_preserve_the_approved_subset() {
+        let initial = Url::parse(
+            "https://erddap.example/erddap/tabledap/data.csv?time%2CTEMP%26time%3E%3D2025-01-01",
+        )
+        .unwrap();
+        let regional = Url::parse(
+            "https://regional.example/erddap/tabledap/data.csv?time%2CTEMP%26time%3E%3D2025-01-01",
+        )
+        .unwrap();
+        validate_redirect_target(&initial, &regional).unwrap();
+
+        for rejected in [
+            "http://regional.example/erddap/tabledap/data.csv?time%2CTEMP%26time%3E%3D2025-01-01",
+            "https://user:secret@regional.example/erddap/tabledap/data.csv?time%2CTEMP%26time%3E%3D2025-01-01",
+            "https://regional.example/erddap/tabledap/other.csv?time%2CTEMP%26time%3E%3D2025-01-01",
+            "https://regional.example/erddap/tabledap/data.csv?time%2CTEMP%26time%3E%3D2026-01-01",
+        ] {
+            assert!(
+                validate_redirect_target(&initial, &Url::parse(rejected).unwrap()).is_err(),
+                "accepted unsafe redirect {rejected}"
+            );
+        }
+    }
 }

@@ -15,7 +15,7 @@ use ecoscope_provider_api::{EcologicalDataProvider, PROVIDER_PROTOCOL_VERSION};
 use serde_json::{Value, json};
 
 use crate::{
-    client::{DownloadMetadata, ErddapClient},
+    client::{DownloadMetadata, ErddapClient, validate_redirect_target},
     config::ErddapConfig,
     query::{Constraint, ErddapOptions, Protocol, build_subset},
     table::{InfoMetadata, SearchRecord},
@@ -178,6 +178,7 @@ impl ErddapProvider {
         let url = url::Url::parse(download_url)
             .map_err(|error| EcoScopeError::Invalid(format!("invalid download URL: {error}")))?;
         self.validate_download_url(&url)?;
+        let redirect_chain = planned_redirect_chain(file, &url)?;
         let object_dir = self.object_dir.as_ref().ok_or_else(|| {
             EcoScopeError::Internal("ERDDAP object directory was not configured".into())
         })?;
@@ -186,7 +187,7 @@ impl ErddapProvider {
         let partial = object_dir.join(format!(".partial-{}", asset_id.0));
         let downloaded = self
             .client
-            .download_to_partial(&url, &partial, should_cancel)
+            .download_to_partial(&redirect_chain, &partial, should_cancel)
             .await?;
         let destination = object_dir.join(&downloaded.digest);
         let stored = if tokio::fs::metadata(&destination).await.is_ok() {
@@ -213,7 +214,7 @@ impl ErddapProvider {
         let source = SourceFile {
             asset_id,
             original_name: file.name.clone(),
-            source_uri: url.to_string(),
+            source_uri: downloaded.final_url.to_string(),
             local_object: Some(downloaded.digest.clone()),
             size_bytes: downloaded.size_bytes,
             checksum: Checksum {
@@ -554,6 +555,7 @@ impl EcologicalDataProvider for ErddapProvider {
             &available_variables,
             &options,
         )?;
+        let redirect_chain = self.client.resolve_download_chain(&subset.url).await?;
         let file = PlannedFile {
             provider_id: self.config.provider_id.clone(),
             name: subset.filename,
@@ -566,6 +568,15 @@ impl EcologicalDataProvider for ErddapProvider {
                 ("protocol".into(), json!(options.protocol)),
                 ("output_format".into(), json!(options.output_format)),
                 ("decoded_query".into(), Value::String(subset.expression)),
+                (
+                    "redirect_chain".into(),
+                    json!(
+                        redirect_chain
+                            .iter()
+                            .map(url::Url::as_str)
+                            .collect::<Vec<_>>()
+                    ),
+                ),
             ]),
             expires_at: None,
         };
@@ -657,6 +668,40 @@ fn coverage_polygon(attributes: &BTreeMap<String, Value>) -> Option<GeoGeometry>
             "coordinates": [[[west, south], [east, south], [east, north], [west, north], [west, south]]]
         }),
     })
+}
+
+fn planned_redirect_chain(file: &PlannedFile, initial: &url::Url) -> Result<Vec<url::Url>> {
+    let Some(values) = file.metadata.get("redirect_chain") else {
+        return Ok(vec![initial.clone()]);
+    };
+    let values = values
+        .as_array()
+        .ok_or_else(|| EcoScopeError::Invalid("ERDDAP redirect_chain must be an array".into()))?;
+    if values.is_empty() || values.len() > 6 {
+        return Err(EcoScopeError::Invalid(
+            "ERDDAP redirect_chain must contain between one and six URLs".into(),
+        ));
+    }
+    let chain = values
+        .iter()
+        .map(|value| {
+            let value = value.as_str().ok_or_else(|| {
+                EcoScopeError::Invalid("ERDDAP redirect_chain values must be URLs".into())
+            })?;
+            url::Url::parse(value).map_err(|error| {
+                EcoScopeError::Invalid(format!("invalid ERDDAP redirect URL: {error}"))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if chain.first() != Some(initial) {
+        return Err(EcoScopeError::Invalid(
+            "ERDDAP redirect_chain does not begin with the planned URL".into(),
+        ));
+    }
+    for target in chain.iter().skip(1) {
+        validate_redirect_target(initial, target)?;
+    }
+    Ok(chain)
 }
 
 fn license_metadata(globals: &BTreeMap<String, Value>) -> Option<LicenseMetadata> {
