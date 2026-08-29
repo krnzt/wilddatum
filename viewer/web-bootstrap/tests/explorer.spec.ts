@@ -86,6 +86,9 @@ test("renders LiDAR and hyperspectral views and records real Rerun picks", async
   await expect(page.locator("#selection")).toContainText("cube_pixel_to_spectrum");
   await expect(page.locator("#selection")).toContainText('"status": "resolved"');
   await expect(page.locator("#selection")).toContainText("wavelength_nm");
+  await expect(page.locator("#viewer")).toHaveAttribute("data-recording-revision", /^sel_/);
+  await expect(page.locator("#status")).toContainText("linked selection rendered in Rerun");
+  await expect(page.locator("#viewer")).not.toContainText("Rerun has crashed");
 
   await stopExplorer();
   explorerUrl = await startExplorer(pointViewId);

@@ -1,6 +1,9 @@
 //! Loopback-only browser surface for the Rerun Web Viewer.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -23,7 +26,7 @@ struct AppState {
     service: WildDatumService,
     view_id: ViewId,
     token: String,
-    recording: PathBuf,
+    recording: Arc<RwLock<PathBuf>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +66,7 @@ pub async fn serve(service: WildDatumService, options: ServeOptions) -> Result<(
         service,
         view_id: view.view_id,
         token: Uuid::new_v4().simple().to_string(),
-        recording,
+        recording: Arc::new(RwLock::new(recording)),
     });
 
     let web_dist = find_web_dist();
@@ -169,7 +172,44 @@ async fn post_selection_links(
         .resolve_selection_links(&event.selection_id)
         .await
     {
-        Ok(resolution) => (StatusCode::CREATED, Json(resolution)).into_response(),
+        Ok(resolution) => {
+            let target = state
+                .service
+                .paths()
+                .views_dir
+                .join(format!("{}.linked.rrd", state.view_id));
+            let temporary = state.service.paths().views_dir.join(format!(
+                "{}.linked-{}.tmp.rrd",
+                state.view_id,
+                Uuid::new_v4().simple()
+            ));
+            let service = state.service.clone();
+            let view_id = state.view_id.0.clone();
+            let rendered = resolution.clone();
+            let render_target = target.clone();
+            let render_result = tokio::task::spawn_blocking(move || {
+                wilddatum_rerun::write_recording_with_link_resolution(
+                    &service,
+                    &view_id,
+                    &temporary,
+                    Some(&rendered),
+                )?;
+                std::fs::rename(&temporary, &render_target)?;
+                Ok::<_, wilddatum_core::WildDatumError>(())
+            })
+            .await;
+            match render_result {
+                Ok(Ok(())) => {
+                    *state.recording.write().expect("recording lock poisoned") = target;
+                    let mut response =
+                        serde_json::to_value(&resolution).expect("link resolution is serializable");
+                    response["recording_revision"] = json!(resolution.selection_id.0);
+                    (StatusCode::CREATED, Json(response)).into_response()
+                }
+                Ok(Err(error)) => error_response(error.to_string()),
+                Err(error) => error_response(format!("linked recording task failed: {error}")),
+            }
+        }
         Err(error) => error_response(error.to_string()),
     }
 }
@@ -182,7 +222,12 @@ async fn get_recording(
     if let Err(response) = authorize(&state, &query, &headers, false) {
         return response.into_response();
     }
-    match tokio::fs::read(&state.recording).await {
+    let recording = state
+        .recording
+        .read()
+        .expect("recording lock poisoned")
+        .clone();
+    match tokio::fs::read(recording).await {
         Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/octet-stream")
@@ -273,7 +318,7 @@ mod tests {
             service,
             view_id: ViewId::new(),
             token: "secret".into(),
-            recording: directory.path().join("view.rrd"),
+            recording: Arc::new(RwLock::new(directory.path().join("view.rrd"))),
         };
         let query = TokenQuery {
             token: "secret".into(),

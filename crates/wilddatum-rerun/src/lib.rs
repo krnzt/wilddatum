@@ -16,7 +16,8 @@ use rerun::blueprint::{
 };
 use serde_json::Value;
 use wilddatum_core::{
-    DatasetManifest, MAX_RENDERED_POINT_CLOUD_POINTS, Modality, Result, ViewLayout, WildDatumError,
+    DatasetManifest, EcoViewSpec, MAX_RENDERED_POINT_CLOUD_POINTS, Modality, Result,
+    SelectionLinkResolution, SemanticSelection, SuggestedPanelKind, ViewLayout, WildDatumError,
 };
 use wilddatum_service::WildDatumService;
 
@@ -42,6 +43,18 @@ pub fn write_recording(
     service: &WildDatumService,
     view_id: &str,
     output: impl AsRef<Path>,
+) -> Result<PathBuf> {
+    write_recording_with_link_resolution(service, view_id, output, None)
+}
+
+/// Regenerate a complete recording with the structured outcome of one human
+/// selection rendered into its scientific panels. The resolution remains
+/// authoritative; these marks and series are derived presentation artifacts.
+pub fn write_recording_with_link_resolution(
+    service: &WildDatumService,
+    view_id: &str,
+    output: impl AsRef<Path>,
+    link_resolution: Option<&SelectionLinkResolution>,
 ) -> Result<PathBuf> {
     let view = service.get_view(view_id)?;
     let output = output.as_ref().to_path_buf();
@@ -178,12 +191,11 @@ pub fn write_recording(
         }
     }
 
-    send_blueprint(
-        &recording,
-        &view.layout,
-        blueprint_layers,
-        view.provenance_visible,
-    )?;
+    if let Some(resolution) = link_resolution {
+        log_link_resolution(&recording, service, &view, resolution)?;
+    }
+
+    send_blueprint(&recording, &view, blueprint_layers, view.provenance_visible)?;
 
     recording.flush_blocking().map_err(rerun_error)?;
     Ok(output)
@@ -191,10 +203,37 @@ pub fn write_recording(
 
 fn send_blueprint(
     recording: &rerun::RecordingStream,
-    layout: &ViewLayout,
+    view: &EcoViewSpec,
     layers: Vec<BlueprintLayer>,
     provenance_visible: bool,
 ) -> Result<()> {
+    let mut contents = if view.panels.is_empty() {
+        layer_blueprints(layers)
+    } else {
+        scientific_panel_blueprints(view, &layers)?
+    };
+    if provenance_visible {
+        contents.push(ContainerLike::from(
+            TextDocumentView::new("WildDatum provenance").with_origin("wilddatum"),
+        ));
+    }
+
+    let root: ContainerLike = match &view.layout {
+        ViewLayout::Single | ViewLayout::Tabs => Tabs::new(contents).into(),
+        ViewLayout::Horizontal => Horizontal::new(contents).into(),
+        ViewLayout::Vertical => Vertical::new(contents).into(),
+        ViewLayout::Grid { columns } => Grid::new(contents)
+            .with_grid_columns((*columns).max(1))
+            .into(),
+    };
+    Blueprint::new(root)
+        .with_auto_views(false)
+        .with_auto_layout(false)
+        .send(recording, BlueprintActivation::default())
+        .map_err(rerun_error)
+}
+
+fn layer_blueprints(layers: Vec<BlueprintLayer>) -> Vec<ContainerLike> {
     let mut contents = Vec::new();
     for layer in layers {
         let name = layer.name;
@@ -248,25 +287,257 @@ fn send_blueprint(
             }
         }
     }
-    if provenance_visible {
-        contents.push(ContainerLike::from(
-            TextDocumentView::new("WildDatum provenance").with_origin("wilddatum"),
+    contents
+}
+
+fn scientific_panel_blueprints(
+    view: &EcoViewSpec,
+    layers: &[BlueprintLayer],
+) -> Result<Vec<ContainerLike>> {
+    view.panels
+        .iter()
+        .map(|panel| {
+            let layer_index = view
+                .layers
+                .iter()
+                .position(|layer| layer.id == panel.layer_id)
+                .ok_or_else(|| {
+                    WildDatumError::Invalid(format!(
+                        "scientific panel {} references missing layer {}",
+                        panel.id, panel.layer_id
+                    ))
+                })?;
+            let layer = layers.get(layer_index).ok_or_else(|| {
+                WildDatumError::Internal(format!(
+                    "scientific panel {} has no Rerun layer",
+                    panel.id
+                ))
+            })?;
+            let root = &layer.entity_root;
+            let panel_root = safe_name(&panel.id);
+            let derived = format!("{root}/derived/{panel_root}/**");
+            let linked = format!("{root}/linked_results/{panel_root}/**");
+            let name = format!("{} · {}", layer.name, panel.representation);
+            let contents = match panel.representation.as_str() {
+                "point_cloud" => vec![format!("{root}/points"), derived],
+                "rgb" => vec![
+                    format!("{root}/hyperspectral_rgb"),
+                    format!("{root}/hyperspectral_band"),
+                    derived,
+                ],
+                "spectrum" => vec![linked],
+                "geometry" => vec![
+                    format!("{root}/vector_points"),
+                    format!("{root}/vector_lines"),
+                    derived,
+                ],
+                _ => vec![format!("{root}/**"), derived, linked],
+            };
+            Ok(match panel.kind {
+                SuggestedPanelKind::Map => ContainerLike::from(
+                    MapView::new(name)
+                        .with_origin(root.clone())
+                        .with_contents(contents),
+                ),
+                SuggestedPanelKind::Spatial3d => ContainerLike::from(
+                    Spatial3DView::new(name)
+                        .with_origin(root.clone())
+                        .with_contents(contents),
+                ),
+                SuggestedPanelKind::TimeSeries => ContainerLike::from(
+                    TimeSeriesView::new(name)
+                        .with_origin(root.clone())
+                        .with_contents(contents),
+                ),
+                SuggestedPanelKind::Spatial2d
+                | SuggestedPanelKind::Profile
+                | SuggestedPanelKind::Heatmap => ContainerLike::from(
+                    Spatial2DView::new(name)
+                        .with_origin(root.clone())
+                        .with_contents(contents),
+                ),
+                SuggestedPanelKind::Table => ContainerLike::from(
+                    TextDocumentView::new(name).with_origin(format!("{root}/manifest")),
+                ),
+            })
+        })
+        .collect()
+}
+
+fn log_link_resolution(
+    recording: &rerun::RecordingStream,
+    service: &WildDatumService,
+    view: &EcoViewSpec,
+    resolution: &SelectionLinkResolution,
+) -> Result<()> {
+    if resolution.view_id != view.view_id || resolution.view_revision != view.revision {
+        return Err(WildDatumError::Conflict(
+            "link resolution does not belong to this view revision".into(),
         ));
     }
-
-    let root: ContainerLike = match layout {
-        ViewLayout::Single | ViewLayout::Tabs => Tabs::new(contents).into(),
-        ViewLayout::Horizontal => Horizontal::new(contents).into(),
-        ViewLayout::Vertical => Vertical::new(contents).into(),
-        ViewLayout::Grid { columns } => Grid::new(contents)
-            .with_grid_columns((*columns).max(1))
-            .into(),
-    };
-    Blueprint::new(root)
-        .with_auto_views(false)
-        .with_auto_layout(false)
-        .send(recording, BlueprintActivation::default())
+    let selection = service.get_selection(&resolution.selection_id.0)?;
+    if let Some(first_link) = resolution.links.first() {
+        log_selection_marker(
+            recording,
+            view,
+            &first_link.source_panel,
+            &selection.selection,
+            "source_selection",
+        )?;
+    }
+    for link in &resolution.links {
+        if let Some(derived) = &link.derived_selection {
+            log_selection_marker(
+                recording,
+                view,
+                &link.target_panel,
+                derived,
+                "derived_selection",
+            )?;
+        }
+        if let Some(result) = &link.result {
+            log_linked_result(recording, view, &link.target_panel, &result.preview)?;
+        }
+    }
+    recording
+        .log_static(
+            format!(
+                "wilddatum/link_resolutions/{}",
+                safe_name(&resolution.selection_id.0)
+            ),
+            &rerun::TextDocument::new(serde_json::to_string_pretty(resolution)?)
+                .with_media_type(rerun::MediaType::markdown()),
+        )
         .map_err(rerun_error)
+}
+
+fn log_selection_marker(
+    recording: &rerun::RecordingStream,
+    view: &EcoViewSpec,
+    panel_id: &str,
+    selection: &SemanticSelection,
+    marker_name: &str,
+) -> Result<()> {
+    let (root, layer) = panel_layer(view, panel_id)?;
+    let marker_root = format!(
+        "{root}/derived/{}/{}",
+        safe_name(panel_id),
+        safe_name(marker_name)
+    );
+    match selection {
+        SemanticSelection::CubePixel { x, y, .. } => recording
+            .log_static(
+                marker_root,
+                &rerun::Points2D::new([[*x as f32 + 0.5, *y as f32 + 0.5]])
+                    .with_colors([rerun::Color::from_rgb(255, 58, 168)])
+                    .with_radii([rerun::Radius::new_ui_points(10.0)]),
+            )
+            .map_err(rerun_error),
+        SemanticSelection::PointSet { spatial_query, .. } => {
+            let Some(coordinates) = spatial_query
+                .pointer("/geometry/coordinates")
+                .and_then(Value::as_array)
+                .filter(|coordinates| coordinates.len() >= 3)
+            else {
+                return Ok(());
+            };
+            let mut position = [0.0_f32; 3];
+            let origin = layer
+                .encoding
+                .get("coordinate_origin")
+                .and_then(Value::as_array);
+            for index in 0..3 {
+                let world = coordinates[index].as_f64().unwrap_or_default();
+                let offset = origin
+                    .and_then(|origin| origin.get(index))
+                    .and_then(Value::as_f64)
+                    .unwrap_or_default();
+                position[index] = (world - offset) as f32;
+            }
+            recording
+                .log_static(
+                    marker_root,
+                    &rerun::Points3D::new([position])
+                        .with_colors([rerun::Color::from_rgb(255, 58, 168)])
+                        .with_radii([rerun::Radius::new_ui_points(9.0)]),
+                )
+                .map_err(rerun_error)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn log_linked_result(
+    recording: &rerun::RecordingStream,
+    view: &EcoViewSpec,
+    panel_id: &str,
+    preview: &Value,
+) -> Result<()> {
+    let (root, _) = panel_layer(view, panel_id)?;
+    let Some(rows) = preview.get("rows").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let positions = rows
+        .iter()
+        .filter_map(|row| {
+            Some([
+                json_number(row.get("wavelength_nm")?)? as f32,
+                json_number(row.get("value")?)? as f32,
+            ])
+        })
+        .collect::<Vec<_>>();
+    if positions.is_empty() {
+        return Ok(());
+    }
+    let result_root = format!("{root}/linked_results/{}", safe_name(panel_id));
+    recording
+        .log_static(
+            format!("{result_root}/spectrum_line"),
+            &rerun::LineStrips2D::new([positions.clone()])
+                .with_colors([rerun::Color::from_rgb(255, 58, 168)])
+                .with_radii([rerun::Radius::new_ui_points(2.5)]),
+        )
+        .map_err(rerun_error)?;
+    recording
+        .log_static(
+            format!("{result_root}/spectrum_samples"),
+            &rerun::Points2D::new(positions)
+                .with_colors([rerun::Color::from_rgb(255, 196, 224)])
+                .with_radii([rerun::Radius::new_ui_points(3.5)]),
+        )
+        .map_err(rerun_error)
+}
+
+fn panel_layer<'a>(
+    view: &'a EcoViewSpec,
+    panel_id: &str,
+) -> Result<(String, &'a wilddatum_core::EcoLayer)> {
+    let panel = view
+        .panels
+        .iter()
+        .find(|panel| panel.id == panel_id)
+        .ok_or_else(|| WildDatumError::Invalid(format!("view has no panel {panel_id}")))?;
+    let layer = view
+        .layers
+        .iter()
+        .find(|layer| layer.id == panel.layer_id)
+        .ok_or_else(|| {
+            WildDatumError::Invalid(format!(
+                "panel {panel_id} references missing layer {}",
+                panel.layer_id
+            ))
+        })?;
+    Ok((
+        format!("datasets/{}/{}", layer.dataset_id, safe_name(&layer.id)),
+        layer,
+    ))
+}
+
+fn json_number(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+        .filter(|value| value.is_finite())
 }
 
 fn source_path(service: &WildDatumService, manifest: &DatasetManifest) -> Result<PathBuf> {

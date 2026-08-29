@@ -32,7 +32,8 @@ viewDetails.innerHTML = `
 `;
 
 const viewer = new WebViewer();
-await viewer.start(apiUrl("/api/recording.rrd"), viewerContainer, {
+let activeRecordingUrl = apiUrl("/api/recording.rrd");
+await viewer.start(activeRecordingUrl, viewerContainer, {
   hide_welcome_screen: true,
   width: "100%",
   height: "100%",
@@ -42,6 +43,9 @@ status.textContent = "Connected · Rerun semantic bridge active";
 
 viewer.on("selection_change", async (event: SelectionChangeEvent) => {
   const selection = semanticSelection(event, view);
+  if (selection.type === "entities" && Array.isArray(selection.entity_paths) && selection.entity_paths.length === 0) {
+    return;
+  }
   const record = await fetchJson(apiUrl("/api/selection"), {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -55,6 +59,15 @@ viewer.on("selection_change", async (event: SelectionChangeEvent) => {
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({selection_id: record.selection_id})
   });
+  if (linkResolution.recording_revision) {
+    const nextRecording = new URL(apiUrl("/api/recording.rrd"));
+    nextRecording.searchParams.set("revision", String(linkResolution.recording_revision));
+    viewer.close(activeRecordingUrl);
+    activeRecordingUrl = nextRecording.href;
+    viewer.open(activeRecordingUrl);
+    viewerContainer.dataset.recordingRevision = String(linkResolution.recording_revision);
+    status.textContent = "Connected · linked selection rendered in Rerun";
+  }
   selectionOutput.textContent = JSON.stringify({selection: record, link_resolution: linkResolution}, null, 2);
 });
 
