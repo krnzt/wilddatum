@@ -231,6 +231,14 @@ is generally unknown at approval time, so constrain variables, rows, time, and
 grid axes carefully. Materialization freezes the exact returned bytes locally;
 repeating the same upstream query later may produce a different checksum.
 
+![EcoScope rendering EMSO OBSEA seabed temperature and native quality-control data in Rerun with provenance and structured agent context](docs/assets/ecoscope-erddap-obsea.jpg)
+
+_A real EMSO workflow executed through EcoScope's registered stdio MCP:
+`plan_materialization` → `approve_plan` → `materialize_dataset` → `create_view`
+→ `render_view`. The browser shows the public OBSEA temperature and native QC
+channels, the regenerable `EcoViewSpec`, and selection events returned as
+structured agent context._
+
 ## Multidimensional data
 
 EcoScope inventories cube arrays without guessing ambiguous scientific meaning.
