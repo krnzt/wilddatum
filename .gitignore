@@ -16,3 +16,6 @@ node_modules/
 
 # Local Superpowers execution plans
 /docs/superpowers/
+
+# Isolated feature worktrees
+/.worktrees/
