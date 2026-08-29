@@ -1,0 +1,111 @@
+use std::collections::BTreeMap;
+
+use axum::{Json, Router, routing::get};
+use ecoscope_core::ResourceQuery;
+use ecoscope_provider_api::EcologicalDataProvider;
+use ecoscope_provider_erddap::{ErddapProvider, config::ErddapConfig};
+use serde_json::Value;
+
+async fn fixture_server() -> ErddapConfig {
+    let search: Value = serde_json::from_str(include_str!("fixtures/search.json")).unwrap();
+    let info: Value = serde_json::from_str(include_str!("fixtures/info.json")).unwrap();
+    let app = Router::new()
+        .route(
+            "/erddap/search/index.json",
+            get(move || {
+                let search = search.clone();
+                async move { Json(search) }
+            }),
+        )
+        .route(
+            "/erddap/info/ArgoFloats/index.json",
+            get(move || {
+                let info = info.clone();
+                async move { Json(info) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    ErddapConfig {
+        provider_id: "fixture-erddap".into(),
+        name: "Fixture ERDDAP".into(),
+        base_url: format!("http://{address}/erddap"),
+        allowed_origin: format!("http://{address}"),
+        homepage: "https://example.test/".into(),
+        catalog_scope: None,
+    }
+}
+
+#[tokio::test]
+async fn catalog_search_and_resolution_are_provider_neutral() {
+    let provider = ErddapProvider::new(fixture_server().await).unwrap();
+    let resources = provider
+        .search_resources(ResourceQuery {
+            text: "temperature".into(),
+            kinds: vec![],
+            modalities: vec![],
+            spatial_filter: None,
+            temporal_start: None,
+            temporal_end: None,
+            provider_filters: BTreeMap::new(),
+            limit: 10,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0].resource_id, "ArgoFloats");
+    assert_eq!(resources[0].provider_id, "fixture-erddap");
+
+    let resource = provider.resolve_resource("ArgoFloats").await.unwrap();
+    assert_eq!(
+        resource.provider_extensions["cdm_data_type"],
+        "TrajectoryProfile"
+    );
+    assert_eq!(
+        resource.provider_extensions["variables"]["temp"]["attributes"]["units"],
+        "degree_C"
+    );
+    assert_eq!(
+        resource.temporal_start.as_deref(),
+        Some("2025-01-01T00:00:00Z")
+    );
+}
+
+#[tokio::test]
+async fn catalog_metadata_limit_is_enforced_before_deserialization() {
+    let app = Router::new().route(
+        "/erddap/search/index.json",
+        get(|| async { "x".repeat(128) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = ErddapProvider::new(ErddapConfig {
+        provider_id: "bounded-erddap".into(),
+        name: "Bounded ERDDAP".into(),
+        base_url: format!("http://{address}/erddap"),
+        allowed_origin: format!("http://{address}"),
+        homepage: "https://example.test/".into(),
+        catalog_scope: None,
+    })
+    .unwrap()
+    .with_metadata_limit_bytes(32);
+
+    let error = provider
+        .search_resources(ResourceQuery {
+            text: String::new(),
+            kinds: vec![],
+            modalities: vec![],
+            spatial_filter: None,
+            temporal_start: None,
+            temporal_end: None,
+            provider_filters: BTreeMap::new(),
+            limit: 10,
+        })
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("32 byte limit"));
+}
