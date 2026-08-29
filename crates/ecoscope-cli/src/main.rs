@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf, process::Command};
+use std::{collections::BTreeMap, path::PathBuf, process::Command, sync::mpsc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -670,9 +670,11 @@ fn doctor(service: &EcoScopeService) -> Result<()> {
         .ok()
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    let (neon_connected, neon_credential_probe) = doctor_neon_connection();
     let report = serde_json::json!({
         "service": health,
-        "neon_connected": ecoscope_mcp::neon_connected(),
+        "neon_connected": neon_connected,
+        "neon_credential_probe": neon_credential_probe,
         "rerun": {
             "installed": rerun_status.is_some(),
             "version": rerun_status,
@@ -684,6 +686,21 @@ fn doctor(service: &EcoScopeService) -> Result<()> {
         }
     });
     print_json(&report)
+}
+
+fn doctor_neon_connection() -> (Option<bool>, &'static str) {
+    if std::env::var("NEON_API_TOKEN").is_ok_and(|token| !token.trim().is_empty()) {
+        return (Some(true), "environment");
+    }
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = sender.send(ecoscope_mcp::neon_connected());
+    });
+    match receiver.recv_timeout(Duration::from_secs(2)) {
+        Ok(connected) => (Some(connected), "keychain"),
+        Err(mpsc::RecvTimeoutError::Timeout) => (None, "timed_out"),
+        Err(mpsc::RecvTimeoutError::Disconnected) => (None, "unavailable"),
+    }
 }
 
 fn shell_display(path: &std::path::Path) -> String {
