@@ -1,11 +1,18 @@
 //! Stable domain model shared by WildDatum providers, storage, MCP tools, and viewers.
 
 pub mod profile_trajectory;
+pub mod scientific;
 
 pub use profile_trajectory::{
     PROFILE_TRAJECTORY_OBSERVATION_SUFFIXES, PROFILE_TRAJECTORY_VIEW_KIND,
     ProfileTrajectoryRecipeV1, ProfileValueSpec, SourceRowSelectionMapping, VerticalAxisSpec,
     VerticalDirection,
+};
+pub use scientific::{
+    CoordinateSummary, InferenceConfidence, LinkExactness, SCIENTIFIC_INVENTORY_VERSION,
+    ScientificAxis, ScientificComponent, ScientificComponentKind, ScientificInventory,
+    ScientificRole, SemanticEvidence, SuggestedLink, SuggestedPanel, SuggestedPanelKind,
+    VIEW_SUGGESTION_VERSION, ViewSuggestion, ViewSuggestionSet,
 };
 
 use std::{collections::BTreeMap, fmt, path::Path};
