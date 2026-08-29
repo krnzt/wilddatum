@@ -1,19 +1,21 @@
 //! Generic ERDDAP provider with maintained research-infrastructure presets.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use async_trait::async_trait;
 use chrono::Utc;
 use ecoscope_core::{
-    CatalogEntry, CatalogQuery, CredentialRef, DatasetManifest, DatasetPlan, DatasetRequest,
-    EcoScopeError, GeoGeometry, Modality, PlanId, PlannedFile, ProviderCapability, ProviderKind,
+    AssetId, CatalogEntry, CatalogQuery, Checksum, CitationMetadata, CredentialRef, DatasetId,
+    DatasetManifest, DatasetPlan, DatasetRequest, EcoScopeError, FormatDescriptor, GeoGeometry,
+    LicenseMetadata, Modality, PlanId, PlannedFile, ProviderCapability, ProviderKind,
     ProviderManifest, ProviderStatus, ResourceKind, ResourceQuery, ResourceRecord, Result,
+    SourceFile, Transformation,
 };
 use ecoscope_provider_api::{EcologicalDataProvider, PROVIDER_PROTOCOL_VERSION};
 use serde_json::{Value, json};
 
 use crate::{
-    client::ErddapClient,
+    client::{DownloadMetadata, ErddapClient},
     config::ErddapConfig,
     query::{Constraint, ErddapOptions, Protocol, build_subset},
     table::{InfoMetadata, SearchRecord},
@@ -28,6 +30,7 @@ pub mod table;
 pub struct ErddapProvider {
     config: ErddapConfig,
     client: ErddapClient,
+    object_dir: Option<PathBuf>,
 }
 
 impl ErddapProvider {
@@ -44,11 +47,20 @@ impl ErddapProvider {
             ));
         }
         let client = ErddapClient::new(&config.base_url)?;
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            client,
+            object_dir: None,
+        })
     }
 
     pub fn with_metadata_limit_bytes(mut self, limit: usize) -> Self {
         self.client = self.client.with_metadata_limit_bytes(limit);
+        self
+    }
+
+    pub fn with_object_dir(mut self, object_dir: impl Into<PathBuf>) -> Self {
+        self.object_dir = Some(object_dir.into());
         self
     }
 
@@ -143,6 +155,219 @@ impl ErddapProvider {
         );
         resource.raw_metadata = Some(info.raw_metadata);
         Ok(resource)
+    }
+
+    async fn download_file_with_cancel<F>(
+        &self,
+        file: &PlannedFile,
+        should_cancel: &F,
+    ) -> Result<(SourceFile, DownloadMetadata)>
+    where
+        F: Fn() -> bool + Send + Sync,
+    {
+        if file.provider_id != self.config.provider_id {
+            return Err(EcoScopeError::Invalid(format!(
+                "planned file belongs to provider {}, expected {}",
+                file.provider_id, self.config.provider_id
+            )));
+        }
+        let download_url = file
+            .download_url
+            .as_deref()
+            .ok_or_else(|| EcoScopeError::Invalid(format!("{} has no download URL", file.name)))?;
+        let url = url::Url::parse(download_url)
+            .map_err(|error| EcoScopeError::Invalid(format!("invalid download URL: {error}")))?;
+        self.validate_download_url(&url)?;
+        let object_dir = self.object_dir.as_ref().ok_or_else(|| {
+            EcoScopeError::Internal("ERDDAP object directory was not configured".into())
+        })?;
+        tokio::fs::create_dir_all(object_dir).await?;
+        let asset_id = AssetId::new();
+        let partial = object_dir.join(format!(".partial-{}", asset_id.0));
+        let downloaded = self
+            .client
+            .download_to_partial(&url, &partial, should_cancel)
+            .await?;
+        let destination = object_dir.join(&downloaded.digest);
+        let stored = if tokio::fs::metadata(&destination).await.is_ok() {
+            tokio::fs::remove_file(&partial).await?;
+            Ok(())
+        } else {
+            tokio::fs::rename(&partial, &destination).await
+        };
+        if let Err(error) = stored {
+            let _ = tokio::fs::remove_file(&partial).await;
+            return Err(EcoScopeError::Io(error));
+        }
+        let mut metadata = file.metadata.clone();
+        insert_optional(
+            &mut metadata,
+            "response_etag",
+            downloaded.metadata.etag.clone(),
+        );
+        insert_optional(
+            &mut metadata,
+            "response_last_modified",
+            downloaded.metadata.last_modified.clone(),
+        );
+        let source = SourceFile {
+            asset_id,
+            original_name: file.name.clone(),
+            source_uri: url.to_string(),
+            local_object: Some(downloaded.digest.clone()),
+            size_bytes: downloaded.size_bytes,
+            checksum: Checksum {
+                algorithm: "blake3".into(),
+                value: downloaded.digest,
+            },
+            media_type: downloaded.metadata.media_type.clone(),
+            location: file.location.clone(),
+            temporal_partition: file.temporal_partition.clone(),
+            metadata,
+        };
+        Ok((source, downloaded.metadata))
+    }
+
+    fn validate_download_url(&self, url: &url::Url) -> Result<()> {
+        if url.origin().ascii_serialization() != self.config.allowed_origin {
+            return Err(EcoScopeError::Invalid(format!(
+                "ERDDAP download origin is not allowed: {}",
+                url.origin().ascii_serialization()
+            )));
+        }
+        let base_path = self.client.base_url().path().trim_end_matches('/');
+        if !url.path().starts_with(&format!("{base_path}/tabledap/"))
+            && !url.path().starts_with(&format!("{base_path}/griddap/"))
+        {
+            return Err(EcoScopeError::Invalid(
+                "ERDDAP download URL is outside the tabledap/griddap surfaces".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Materialize with cooperative cancellation and per-file progress.
+    pub async fn materialize_with_control<F, P>(
+        &self,
+        plan: DatasetPlan,
+        should_cancel: F,
+        on_progress: P,
+    ) -> Result<DatasetManifest>
+    where
+        F: Fn() -> bool + Send + Sync,
+        P: Fn(usize, usize) + Send + Sync,
+    {
+        if plan.approved_at.is_none() {
+            return Err(EcoScopeError::Invalid(
+                "the exact dataset plan must be approved before materialization".into(),
+            ));
+        }
+        if plan.clone().finalize()?.plan_hash != plan.plan_hash {
+            return Err(EcoScopeError::Conflict(
+                "dataset plan changed after it was finalized".into(),
+            ));
+        }
+        if plan.file_count != plan.files.len() as u64 || plan.files.is_empty() {
+            return Err(EcoScopeError::Invalid(
+                "ERDDAP plan file count is invalid".into(),
+            ));
+        }
+        let search_record = self
+            .search_records(&plan.request.resource_id, 100)
+            .await?
+            .into_iter()
+            .find(|record| record.dataset_id == plan.request.resource_id)
+            .ok_or_else(|| EcoScopeError::NotFound(plan.request.resource_id.clone()))?;
+        let info = self.client.info(&plan.request.resource_id).await?;
+        let server_version = self
+            .client
+            .server_version()
+            .await
+            .unwrap_or_else(|_| "unknown".into());
+        let total = plan.files.len();
+        let mut source_files = Vec::with_capacity(total);
+        let mut response_metadata = Vec::with_capacity(total);
+        for (index, file) in plan.files.iter().enumerate() {
+            if should_cancel() {
+                return Err(EcoScopeError::Conflict("materialization cancelled".into()));
+            }
+            let (source, metadata) = self.download_file_with_cancel(file, &should_cancel).await?;
+            source_files.push(source);
+            response_metadata.push(metadata);
+            on_progress(index + 1, total);
+        }
+        let accessed_at = Utc::now();
+        let globals = info.globals.clone();
+        let info_url = self.client.info_url(&plan.request.resource_id)?.to_string();
+        let license = license_metadata(&globals);
+        let citation = citation_metadata(&search_record, &globals, &info_url);
+        let first_response = response_metadata.first();
+        let provider_metadata = BTreeMap::from([
+            ("accessed_at".into(), json!(accessed_at)),
+            ("server_version".into(), json!(server_version)),
+            (
+                "cdm_data_type".into(),
+                globals.get("cdm_data_type").cloned().unwrap_or(Value::Null),
+            ),
+            ("global_attributes".into(), json!(globals)),
+            ("info_url".into(), json!(info_url)),
+            (
+                "response_etag".into(),
+                json!(first_response.and_then(|metadata| metadata.etag.clone())),
+            ),
+            (
+                "response_last_modified".into(),
+                json!(first_response.and_then(|metadata| metadata.last_modified.clone())),
+            ),
+        ]);
+        let output_format = source_files
+            .first()
+            .and_then(|source| source.original_name.rsplit_once('.').map(|(_, ext)| ext))
+            .unwrap_or("unknown")
+            .to_owned();
+        Ok(DatasetManifest {
+            dataset_id: DatasetId::new(),
+            provider: ProviderKind::Other(self.config.provider_id.clone()),
+            resource_id: plan.request.resource_id.clone(),
+            resource_version: None,
+            modalities: modalities(
+                globals
+                    .get("cdm_data_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            ),
+            locations: plan.request.locations.clone(),
+            temporal_start: plan.request.temporal_start.clone(),
+            temporal_end: plan.request.temporal_end.clone(),
+            release: plan.request.release.clone(),
+            package: Some(output_format.clone()),
+            include_provisional: plan.request.include_provisional,
+            source_files,
+            transformations: vec![Transformation {
+                name: "erddap_subset".into(),
+                version: server_version,
+                parameters: json!({
+                    "request": plan.request,
+                    "download_url": plan.files[0].download_url,
+                    "response_etag": first_response.and_then(|metadata| metadata.etag.clone()),
+                    "response_last_modified": first_response.and_then(|metadata| metadata.last_modified.clone()),
+                }),
+                created_at: accessed_at,
+            }],
+            format: Some(FormatDescriptor {
+                name: output_format,
+                version: None,
+                profile: None,
+                options: BTreeMap::new(),
+            }),
+            spatial_reference: None,
+            cube: None,
+            cubes: Vec::new(),
+            license,
+            citation,
+            provider_metadata,
+            created_at: accessed_at,
+        })
     }
 }
 
@@ -368,12 +593,11 @@ impl EcologicalDataProvider for ErddapProvider {
 
     async fn materialize(
         &self,
-        _plan: DatasetPlan,
+        plan: DatasetPlan,
         _credentials: Option<CredentialRef>,
     ) -> Result<DatasetManifest> {
-        Err(EcoScopeError::Invalid(
-            "ERDDAP materialization is not available yet".into(),
-        ))
+        self.materialize_with_control(plan, || false, |_, _| {})
+            .await
     }
 }
 
@@ -421,5 +645,42 @@ fn coverage_polygon(attributes: &BTreeMap<String, Value>) -> Option<GeoGeometry>
             "type": "Polygon",
             "coordinates": [[[west, south], [east, south], [east, north], [west, north], [west, south]]]
         }),
+    })
+}
+
+fn license_metadata(globals: &BTreeMap<String, Value>) -> Option<LicenseMetadata> {
+    let name = string_attribute(globals, "license")?;
+    let url = string_attribute(globals, "license_url")
+        .or_else(|| name.starts_with("http").then(|| name.clone()));
+    let lower = name.to_ascii_lowercase();
+    Some(LicenseMetadata {
+        name,
+        url,
+        attribution_required: lower.contains("cc by") || lower.contains("attribution"),
+    })
+}
+
+fn citation_metadata(
+    search: &SearchRecord,
+    globals: &BTreeMap<String, Value>,
+    info_url: &str,
+) -> Option<CitationMetadata> {
+    let text = string_attribute(globals, "citation").unwrap_or_else(|| {
+        let institution = string_attribute(globals, "institution")
+            .or_else(|| search.institution.clone())
+            .map(|institution| format!(" ({institution})"))
+            .unwrap_or_default();
+        format!(
+            "{}{}, ERDDAP dataset {}",
+            search.title, institution, search.dataset_id
+        )
+    });
+    let doi = string_attribute(globals, "doi")
+        .or_else(|| string_attribute(globals, "DOI"))
+        .map(|doi| doi.trim_start_matches("doi:").trim().to_owned());
+    Some(CitationMetadata {
+        text,
+        doi,
+        url: Some(info_url.to_owned()),
     })
 }

@@ -1,12 +1,29 @@
+use std::path::Path;
+
 use ecoscope_core::{EcoScopeError, Result};
 use futures::StreamExt;
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
+use tokio::io::AsyncWriteExt;
 use url::{Host, Url};
 
 use crate::table::{InfoMetadata, SearchRecord, parse_info, parse_search};
 
 pub const DEFAULT_METADATA_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Debug, Clone)]
+pub struct DownloadMetadata {
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+    pub media_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadResult {
+    pub digest: String,
+    pub size_bytes: u64,
+    pub metadata: DownloadMetadata,
+}
 
 #[derive(Clone)]
 pub struct ErddapClient {
@@ -54,6 +71,98 @@ impl ErddapClient {
         let url = self.endpoint(&["info", dataset_id, "index.json"])?;
         let raw = self.get_json(url).await?;
         parse_info(&raw)
+    }
+
+    pub async fn server_version(&self) -> Result<String> {
+        let url = self.endpoint(&["version"])?;
+        let response =
+            self.client.get(url).send().await.map_err(|error| {
+                EcoScopeError::Internal(format!("ERDDAP request failed: {error}"))
+            })?;
+        if !response.status().is_success() {
+            return Err(EcoScopeError::Internal(format!(
+                "ERDDAP version request returned {}",
+                response.status()
+            )));
+        }
+        if response.content_length().is_some_and(|size| size > 65_536) {
+            return Err(EcoScopeError::Invalid(
+                "ERDDAP version response is too large".into(),
+            ));
+        }
+        let text = response
+            .text()
+            .await
+            .map_err(|error| EcoScopeError::Internal(error.to_string()))?;
+        let version = text.trim();
+        if version.is_empty() || version.len() > 65_536 {
+            return Err(EcoScopeError::Invalid(
+                "ERDDAP returned an invalid server version".into(),
+            ));
+        }
+        Ok(version.to_owned())
+    }
+
+    pub async fn download_to_partial<F>(
+        &self,
+        url: &Url,
+        partial: &Path,
+        should_cancel: &F,
+    ) -> Result<DownloadResult>
+    where
+        F: Fn() -> bool + Send + Sync,
+    {
+        if should_cancel() {
+            return Err(EcoScopeError::Conflict("materialization cancelled".into()));
+        }
+        let response =
+            self.client.get(url.clone()).send().await.map_err(|error| {
+                EcoScopeError::Internal(format!("ERDDAP download failed: {error}"))
+            })?;
+        if !response.status().is_success() {
+            return Err(EcoScopeError::Internal(format!(
+                "ERDDAP download returned {}",
+                response.status()
+            )));
+        }
+        let metadata = DownloadMetadata {
+            etag: header_string(response.headers(), reqwest::header::ETAG),
+            last_modified: header_string(response.headers(), reqwest::header::LAST_MODIFIED),
+            media_type: header_string(response.headers(), reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.split(';').next().map(str::to_owned)),
+        };
+        let result = async {
+            let mut output = tokio::fs::File::create(partial).await?;
+            let mut hasher = blake3::Hasher::new();
+            let mut size_bytes = 0_u64;
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                if should_cancel() {
+                    return Err(EcoScopeError::Conflict("materialization cancelled".into()));
+                }
+                let chunk = chunk.map_err(|error| {
+                    EcoScopeError::Internal(format!("ERDDAP download failed: {error}"))
+                })?;
+                output.write_all(&chunk).await?;
+                hasher.update(&chunk);
+                size_bytes = size_bytes.checked_add(chunk.len() as u64).ok_or_else(|| {
+                    EcoScopeError::Invalid("ERDDAP download size overflow".into())
+                })?;
+            }
+            output.flush().await?;
+            output.sync_all().await?;
+            drop(output);
+            Ok(DownloadResult {
+                digest: hasher.finalize().to_hex().to_string(),
+                size_bytes,
+                metadata,
+            })
+        }
+        .await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(partial).await;
+        }
+        result
     }
 
     pub fn info_url(&self, dataset_id: &str) -> Result<Url> {
@@ -118,6 +227,16 @@ impl ErddapClient {
         }
         serde_json::from_slice(&body).map_err(EcoScopeError::from)
     }
+}
+
+fn header_string(
+    headers: &reqwest::header::HeaderMap,
+    name: reqwest::header::HeaderName,
+) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
 }
 
 fn validate_base_url(url: &Url) -> Result<()> {

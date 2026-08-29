@@ -328,12 +328,11 @@ mod tests {
             ],
             arrays: vec![],
         };
+        let variables = ["time", "latitude", "longitude", "temp"].map(str::to_owned);
         let subset = build_subset(
             &Url::parse("https://example.test/erddap").unwrap(),
             "ArgoFloats",
-            &["time", "latitude", "longitude", "temp"]
-                .map(str::to_owned)
-                .to_vec(),
+            &variables,
             &available(&["time", "latitude", "longitude", "temp"]),
             &options,
         )

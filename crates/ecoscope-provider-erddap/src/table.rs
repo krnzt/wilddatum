@@ -178,4 +178,18 @@ mod tests {
         assert_eq!(info.variables["pres"].attributes["units"], "dbar");
         assert_eq!(info.raw_metadata, fixture);
     }
+
+    #[test]
+    fn rejects_rows_whose_width_does_not_match_the_columns() {
+        let malformed = serde_json::json!({
+            "table": {
+                "columnNames": ["Dataset ID", "Title"],
+                "rows": [["only-one-value"]]
+            }
+        });
+
+        let error = parse_search(&malformed).unwrap_err();
+
+        assert!(error.to_string().contains("1 values for 2 columns"));
+    }
 }

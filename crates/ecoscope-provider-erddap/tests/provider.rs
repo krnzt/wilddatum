@@ -1,7 +1,16 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
-use axum::{Json, Router, routing::get};
-use ecoscope_core::{DatasetRequest, ProviderKind, ResourceQuery};
+use axum::{
+    Json, Router,
+    body::{Body, Bytes},
+    http::Response,
+    routing::get,
+};
+use chrono::Utc;
+use ecoscope_core::{DatasetPlan, DatasetRequest, ProviderKind, ResourceQuery};
 use ecoscope_provider_api::EcologicalDataProvider;
 use ecoscope_provider_erddap::{ErddapProvider, config::ErddapConfig};
 use serde_json::Value;
@@ -23,7 +32,24 @@ async fn fixture_server() -> ErddapConfig {
                 let info = info.clone();
                 async move { Json(info) }
             }),
-        );
+        )
+        .route(
+            "/erddap/tabledap/ArgoFloats.csv",
+            get(|| async {
+                let chunks = futures::stream::iter([
+                    Ok::<_, std::convert::Infallible>(Bytes::from_static(b"time,temp\n")),
+                    Ok(Bytes::from_static(b"2025-01-01T00:00:00Z,12.5\n")),
+                    Ok(Bytes::from_static(b"2025-01-01T01:00:00Z,12.8\n")),
+                ]);
+                Response::builder()
+                    .header("content-type", "text/csv")
+                    .header("etag", "fixture-etag")
+                    .header("last-modified", "Thu, 28 Aug 2026 12:00:00 GMT")
+                    .body(Body::from_stream(chunks))
+                    .unwrap()
+            }),
+        )
+        .route("/erddap/version", get(|| async { "2.28" }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -35,6 +61,35 @@ async fn fixture_server() -> ErddapConfig {
         homepage: "https://example.test/".into(),
         catalog_scope: None,
     }
+}
+
+fn materialization_request() -> DatasetRequest {
+    DatasetRequest {
+        provider: ProviderKind::Other("fixture-erddap".into()),
+        resource_id: "ArgoFloats".into(),
+        locations: vec![],
+        temporal_start: None,
+        temporal_end: None,
+        spatial_filter: None,
+        variables: vec!["time".into(), "temp".into()],
+        release: None,
+        package: "basic".into(),
+        include_provisional: false,
+        provider_options: serde_json::from_value(serde_json::json!({
+            "protocol": "tabledap",
+            "output_format": "csv"
+        }))
+        .unwrap(),
+    }
+}
+
+async fn approved_plan(provider: &ErddapProvider) -> DatasetPlan {
+    let mut plan = provider
+        .plan_dataset(materialization_request())
+        .await
+        .unwrap();
+    plan.approved_at = Some(Utc::now());
+    plan
 }
 
 #[tokio::test]
@@ -186,4 +241,128 @@ async fn plan_rejects_unknown_variables() {
         .unwrap_err();
 
     assert!(error.to_string().contains("unknown ERDDAP variable"));
+}
+
+#[tokio::test]
+async fn materialize_streams_an_approved_subset_into_an_immutable_object() {
+    const CSV: &[u8] = b"time,temp\n2025-01-01T00:00:00Z,12.5\n2025-01-01T01:00:00Z,12.8\n";
+
+    let objects = tempfile::tempdir().unwrap();
+    let provider = ErddapProvider::new(fixture_server().await)
+        .unwrap()
+        .with_object_dir(objects.path());
+    let plan = approved_plan(&provider).await;
+    assert!(!plan.requires_credentials);
+
+    let manifest = provider.materialize(plan, None).await.unwrap();
+
+    let digest = blake3::hash(CSV).to_hex().to_string();
+    assert_eq!(manifest.source_files.len(), 1);
+    assert_eq!(manifest.source_files[0].checksum.algorithm, "blake3");
+    assert_eq!(manifest.source_files[0].checksum.value, digest);
+    assert!(objects.path().join(&digest).is_file());
+    assert_eq!(manifest.transformations[0].name, "erddap_subset");
+    assert_eq!(manifest.transformations[0].version, "2.28");
+    assert_eq!(manifest.license.as_ref().unwrap().name, "CC BY 4.0");
+    assert_eq!(manifest.provider_metadata["response_etag"], "fixture-etag");
+}
+
+#[test]
+fn rejects_non_loopback_http_origins() {
+    let error = ErddapProvider::new(ErddapConfig {
+        provider_id: "unsafe-erddap".into(),
+        name: "Unsafe ERDDAP".into(),
+        base_url: "http://example.test/erddap".into(),
+        allowed_origin: "http://example.test".into(),
+        homepage: "https://example.test/".into(),
+        catalog_scope: None,
+    })
+    .err()
+    .unwrap();
+
+    assert!(error.to_string().contains("requires HTTPS"));
+}
+
+#[tokio::test]
+async fn materialize_requires_approval_and_an_untampered_plan() {
+    let objects = tempfile::tempdir().unwrap();
+    let provider = ErddapProvider::new(fixture_server().await)
+        .unwrap()
+        .with_object_dir(objects.path());
+    let plan = provider
+        .plan_dataset(materialization_request())
+        .await
+        .unwrap();
+    let error = provider.materialize(plan.clone(), None).await.unwrap_err();
+    assert!(error.to_string().contains("must be approved"));
+
+    let mut tampered = plan;
+    tampered.approved_at = Some(Utc::now());
+    tampered.files[0].name = "changed.csv".into();
+    let error = provider.materialize(tampered, None).await.unwrap_err();
+    assert!(error.to_string().contains("changed after"));
+}
+
+#[tokio::test]
+async fn materialize_rejects_an_approved_url_from_another_origin() {
+    let objects = tempfile::tempdir().unwrap();
+    let provider = ErddapProvider::new(fixture_server().await)
+        .unwrap()
+        .with_object_dir(objects.path());
+    let mut plan = provider
+        .plan_dataset(materialization_request())
+        .await
+        .unwrap();
+    plan.files[0].download_url =
+        Some("https://example.test/erddap/tabledap/ArgoFloats.csv?time%2Ctemp".into());
+    plan = plan.finalize().unwrap();
+    plan.approved_at = Some(Utc::now());
+
+    let error = provider.materialize(plan, None).await.unwrap_err();
+
+    assert!(error.to_string().contains("origin is not allowed"));
+    assert_eq!(std::fs::read_dir(objects.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn materialize_cleans_partial_files_when_cancelled_mid_stream() {
+    let objects = tempfile::tempdir().unwrap();
+    let provider = ErddapProvider::new(fixture_server().await)
+        .unwrap()
+        .with_object_dir(objects.path());
+    let plan = approved_plan(&provider).await;
+    let checks = AtomicUsize::new(0);
+
+    let error = provider
+        .materialize_with_control(
+            plan,
+            || checks.fetch_add(1, Ordering::SeqCst) >= 2,
+            |_, _| {},
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cancelled"));
+    assert_eq!(std::fs::read_dir(objects.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn materialize_leaves_no_object_after_an_http_failure() {
+    let objects = tempfile::tempdir().unwrap();
+    let provider = ErddapProvider::new(fixture_server().await)
+        .unwrap()
+        .with_object_dir(objects.path());
+    let mut plan = provider
+        .plan_dataset(materialization_request())
+        .await
+        .unwrap();
+    let original = plan.files[0].download_url.as_ref().unwrap();
+    plan.files[0].download_url = Some(original.replace("ArgoFloats.csv", "Missing.csv"));
+    plan = plan.finalize().unwrap();
+    plan.approved_at = Some(Utc::now());
+
+    let error = provider.materialize(plan, None).await.unwrap_err();
+
+    assert!(error.to_string().contains("404"));
+    assert_eq!(std::fs::read_dir(objects.path()).unwrap().count(), 0);
 }
