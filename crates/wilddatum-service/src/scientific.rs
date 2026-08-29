@@ -5,9 +5,9 @@ use wilddatum_core::{
     AxisRole, CoordinateSummary, DatasetId, DatasetManifest, EcoPanel, InferenceConfidence,
     LinkExactness, LocalAssetInspection, Modality, ProviderKind, Result,
     SCIENTIFIC_INVENTORY_VERSION, ScientificAxis, ScientificComponent, ScientificComponentKind,
-    ScientificInventory, ScientificRole, SemanticEvidence, SuggestedLink, SuggestedPanel,
-    SuggestedPanelKind, VIEW_SUGGESTION_VERSION, ViewLinkRule, ViewSuggestion, ViewSuggestionSet,
-    WildDatumError,
+    ScientificInventory, ScientificRole, SemanticEvidence, SpatialReference, SuggestedLink,
+    SuggestedPanel, SuggestedPanelKind, VIEW_SUGGESTION_VERSION, ViewLinkRule, ViewSuggestion,
+    ViewSuggestionSet, WildDatumError,
 };
 
 use crate::WildDatumService;
@@ -441,6 +441,14 @@ fn append_cubes(manifest: &DatasetManifest, components: &mut Vec<ScientificCompo
         }
         if let Some(value) = cube.no_data {
             metadata.insert("no_data".into(), json!(value));
+        }
+        for key in ["affine_transform", "world_to_pixel", "geo_bounds"] {
+            if let Some(value) = source_metadata_value(manifest, key) {
+                metadata.insert(key.into(), value.clone());
+            }
+        }
+        if let Some(spatial_reference) = &manifest.spatial_reference {
+            metadata.insert("spatial_reference".into(), json!(spatial_reference));
         }
         if let Some(spectral_axis) = axes
             .iter()
@@ -947,7 +955,16 @@ fn spectral_cube_suggestion(
         ("x_axis".into(), json!(x_axis.index)),
         ("spectral_axis".into(), json!(spectral_axis.index)),
     ]);
-    for key in ["scale_factor", "add_offset", "no_data", "bad_bands"] {
+    for key in [
+        "scale_factor",
+        "add_offset",
+        "no_data",
+        "bad_bands",
+        "affine_transform",
+        "world_to_pixel",
+        "geo_bounds",
+        "spatial_reference",
+    ] {
         if let Some(value) = component.metadata.get(key) {
             rgb_encoding.insert(key.into(), value.clone());
         }
@@ -1149,14 +1166,19 @@ fn multimodal_suggestions(inventories: &[ScientificInventory]) -> Vec<ViewSugges
             let point_panel = point.panels[0].clone();
             let rgb_panel = cube.panels[0].clone();
             let spectrum_panel = cube.panels[1].clone();
-            let spatial_link_verified = point_inventory.spatial_reference.is_some()
-                && cube_inventory.spatial_reference.is_some()
+            let crs_compatible = spatial_references_compatible(
+                point_inventory.spatial_reference.as_ref(),
+                cube_inventory.spatial_reference.as_ref(),
+            );
+            let footprints_overlap = point_cube_footprints_overlap(point_component, cube_component);
+            let spatial_link_verified = crs_compatible
+                && footprints_overlap
                 && cube_component.metadata.contains_key("world_to_pixel");
             let mut unresolved = point.unresolved_decisions;
             unresolved.extend(cube.unresolved_decisions);
             if !spatial_link_verified {
                 unresolved.push(
-                    "Verify compatible point-cloud CRS and cube world-to-pixel affine metadata before enabling point-to-pixel linking"
+                    "Verify compatible CRS, internally consistent cube affine metadata, and overlapping footprints before enabling point-to-pixel linking"
                         .into(),
                 );
             }
@@ -1197,9 +1219,14 @@ fn multimodal_suggestions(inventories: &[ScientificInventory]) -> Vec<ViewSugges
                         explanation: if spatial_link_verified {
                             "Verified CRS and affine metadata define the point-to-pixel transform"
                                 .into()
-                        } else {
-                            "A point-cloud CRS and cube world-to-pixel affine transform have not both been verified"
+                        } else if !crs_compatible {
+                            "Point-cloud and cube coordinate reference systems are missing or incompatible"
                                 .into()
+                        } else if !cube_component.metadata.contains_key("world_to_pixel") {
+                            "The cube has no internally consistent world-to-pixel affine transform"
+                                .into()
+                        } else {
+                            "The verified point-cloud and cube footprints do not overlap".into()
                         },
                     },
                 ],
@@ -1210,6 +1237,69 @@ fn multimodal_suggestions(inventories: &[ScientificInventory]) -> Vec<ViewSugges
         }
     }
     suggestions
+}
+
+fn spatial_references_compatible(
+    left: Option<&SpatialReference>,
+    right: Option<&SpatialReference>,
+) -> bool {
+    let (Some(left), Some(right)) = (left, right) else {
+        return false;
+    };
+    match (
+        left.authority.as_deref(),
+        left.code.as_deref(),
+        right.authority.as_deref(),
+        right.code.as_deref(),
+    ) {
+        (Some(left_authority), Some(left_code), Some(right_authority), Some(right_code)) => {
+            left_authority.eq_ignore_ascii_case(right_authority)
+                && left_code.eq_ignore_ascii_case(right_code)
+        }
+        _ => left.wkt.is_some() && left.wkt == right.wkt,
+    }
+}
+
+fn point_cube_footprints_overlap(point: &ScientificComponent, cube: &ScientificComponent) -> bool {
+    let Some(point_bounds) = point.metadata.get("bounds") else {
+        return false;
+    };
+    let Some(point_min) = point_bounds.get("min").and_then(Value::as_array) else {
+        return false;
+    };
+    let Some(point_max) = point_bounds.get("max").and_then(Value::as_array) else {
+        return false;
+    };
+    let Some(cube_bounds) = cube.metadata.get("geo_bounds").and_then(Value::as_array) else {
+        return false;
+    };
+    let values = [
+        point_min.first().and_then(Value::as_f64),
+        point_min.get(1).and_then(Value::as_f64),
+        point_max.first().and_then(Value::as_f64),
+        point_max.get(1).and_then(Value::as_f64),
+        cube_bounds.first().and_then(Value::as_f64),
+        cube_bounds.get(1).and_then(Value::as_f64),
+        cube_bounds.get(2).and_then(Value::as_f64),
+        cube_bounds.get(3).and_then(Value::as_f64),
+    ];
+    let [
+        Some(point_x_min),
+        Some(point_y_min),
+        Some(point_x_max),
+        Some(point_y_max),
+        Some(cube_x_min),
+        Some(cube_y_min),
+        Some(cube_x_max),
+        Some(cube_y_max),
+    ] = values
+    else {
+        return false;
+    };
+    point_x_min < cube_x_max
+        && point_x_max > cube_x_min
+        && point_y_min < cube_y_max
+        && point_y_max > cube_y_min
 }
 
 fn spectral_axes(

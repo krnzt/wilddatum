@@ -32,6 +32,19 @@ async fn renders_official_neon_point_cloud_and_hyperspectral_subsets() {
         point_manifest.source_files[0].metadata["point_count"],
         6_609_829
     );
+    assert_eq!(
+        point_manifest
+            .spatial_reference
+            .as_ref()
+            .unwrap()
+            .code
+            .as_deref(),
+        Some("32611")
+    );
+    assert_eq!(
+        point_manifest.source_files[0].metadata["crs_source"],
+        "las_geokey_directory"
+    );
     let point_view = service
         .create_view(
             "Official NEON point-cloud fixture".into(),
@@ -85,6 +98,30 @@ async fn renders_official_neon_point_cloud_and_hyperspectral_subsets() {
         dataset["path"] == "/SJER/Reflectance/Reflectance_Data"
             && dataset["shape"] == json!([500, 500, 107])
     }));
+    assert_eq!(
+        hyperspectral_manifest
+            .spatial_reference
+            .as_ref()
+            .unwrap()
+            .code
+            .as_deref(),
+        Some("32611")
+    );
+    assert_eq!(hyperspectral_manifest.cubes[0].scale_factor, Some(0.0001));
+    assert_eq!(hyperspectral_manifest.cubes[0].no_data, Some(-9999.0));
+    assert!(
+        !hyperspectral_manifest.source_files[0]
+            .metadata
+            .contains_key("world_to_pixel")
+    );
+    assert!(
+        service
+            .scientific_inventory(&hyperspectral_manifest.dataset_id.0)
+            .unwrap()
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Spatial_Extent_meters disagree"))
+    );
     let hyperspectral_view = service
         .create_view(
             "Official NEON hyperspectral fixture".into(),

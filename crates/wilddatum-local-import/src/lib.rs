@@ -18,6 +18,17 @@ pub struct Hdf5Structure {
     pub datasets: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct ScientificMetadataInspection {
+    pub format: String,
+    pub modalities: Vec<Modality>,
+    pub dimensions: Vec<u64>,
+    pub fields: Vec<String>,
+    pub crs: Option<String>,
+    pub warnings: Vec<String>,
+    pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
 pub async fn inspect_path(path: &Path) -> Result<LocalAssetInspection> {
     let extension = extension(path);
     let is_zarr_directory = path.is_dir() && extension == "zarr";
@@ -54,11 +65,65 @@ pub async fn inspect_path(path: &Path) -> Result<LocalAssetInspection> {
         metadata: BTreeMap::new(),
     };
 
-    match extension.as_str() {
-        "csv" | "tsv" => inspect_delimited(path, extension == "tsv", &mut inspection)?,
-        "parquet" | "geoparquet" => inspect_parquet(path, &mut inspection)?,
+    inspect_file_structure(path, &extension, is_zarr_directory, &mut inspection)?;
+
+    Ok(inspection)
+}
+
+/// Inspect scientific structure without hashing the source again. Provider
+/// materializers use this after download checksums have already been verified.
+pub fn inspect_scientific_metadata(
+    path: &Path,
+    source_name: &str,
+) -> Result<ScientificMetadataInspection> {
+    let extension = extension(Path::new(source_name));
+    let is_zarr_directory = path.is_dir() && extension == "zarr";
+    if !path.is_file() && !is_zarr_directory {
+        return Err(WildDatumError::Invalid(
+            "scientific metadata inspection requires an existing file or .zarr directory".into(),
+        ));
+    }
+    let mut inspection = LocalAssetInspection {
+        asset_id: AssetId::new(),
+        display_name: LocalAssetInspection::display_name_for(path),
+        size_bytes: 0,
+        fingerprint: Checksum {
+            algorithm: "not_recomputed".into(),
+            value: String::new(),
+        },
+        media_type: None,
+        modalities: modalities_for_extension(&extension),
+        format: extension.clone(),
+        dimensions: vec![],
+        fields: vec![],
+        crs: None,
+        requires_mapping: false,
+        warnings: vec![],
+        metadata: BTreeMap::new(),
+    };
+    inspect_file_structure(path, &extension, is_zarr_directory, &mut inspection)?;
+    Ok(ScientificMetadataInspection {
+        format: inspection.format,
+        modalities: inspection.modalities,
+        dimensions: inspection.dimensions,
+        fields: inspection.fields,
+        crs: inspection.crs,
+        warnings: inspection.warnings,
+        metadata: inspection.metadata,
+    })
+}
+
+fn inspect_file_structure(
+    path: &Path,
+    extension: &str,
+    is_zarr_directory: bool,
+    inspection: &mut LocalAssetInspection,
+) -> Result<()> {
+    match extension {
+        "csv" | "tsv" => inspect_delimited(path, extension == "tsv", inspection)?,
+        "parquet" | "geoparquet" => inspect_parquet(path, inspection)?,
         "h5" | "hdf5" => {
-            inspect_hdf5(path, &mut inspection)?;
+            inspect_hdf5(path, inspection)?;
             inspection.requires_mapping = true;
             inspection.warnings.push(
                 "Confirm spatial axes, spectral axis, wavelength coordinates, scale, no-data, and georeferencing"
@@ -66,7 +131,7 @@ pub async fn inspect_path(path: &Path) -> Result<LocalAssetInspection> {
             );
         }
         "nc" | "nc4" => {
-            inspect_netcdf(path, &mut inspection)?;
+            inspect_netcdf(path, inspection)?;
             inspection.requires_mapping = true;
             inspection.warnings.push(
                 "Multidimensional axes, wavelengths, and georeferencing require confirmation"
@@ -74,24 +139,24 @@ pub async fn inspect_path(path: &Path) -> Result<LocalAssetInspection> {
             );
         }
         "las" | "laz" | "copc" => {
-            inspect_lidar(path, &mut inspection)?;
+            inspect_lidar(path, inspection)?;
             inspection
                 .metadata
                 .insert("recommended_internal_format".into(), json!("copc"));
         }
         "tif" | "tiff" => {
-            inspect_geotiff(path, &mut inspection)?;
+            inspect_geotiff(path, inspection)?;
             inspection.metadata.insert(
                 "recommended_internal_format".into(),
                 json!("cloud_optimized_geotiff"),
             );
         }
-        "geojson" | "json" => inspect_geojson(path, &mut inspection)?,
-        "shp" => inspect_shapefile(path, &mut inspection)?,
-        "fgb" => inspect_flatgeobuf(path, &mut inspection)?,
-        "png" | "jpg" | "jpeg" | "webp" => inspect_image(path, &mut inspection)?,
+        "geojson" | "json" => inspect_geojson(path, inspection)?,
+        "shp" => inspect_shapefile(path, inspection)?,
+        "fgb" => inspect_flatgeobuf(path, inspection)?,
+        "png" | "jpg" | "jpeg" | "webp" => inspect_image(path, inspection)?,
         "zarr" => {
-            inspect_zarr(path, &mut inspection)?;
+            inspect_zarr(path, inspection)?;
             inspection.requires_mapping = true;
             inspection.metadata.insert(
                 "storage".into(),
@@ -105,7 +170,7 @@ pub async fn inspect_path(path: &Path) -> Result<LocalAssetInspection> {
         _ => {}
     }
 
-    Ok(inspection)
+    Ok(())
 }
 
 fn extension(path: &Path) -> String {
@@ -496,12 +561,86 @@ fn inspect_lidar(path: &Path, inspection: &mut LocalAssetInspection) -> Result<(
             transforms.z.offset
         ]),
     );
+    if let Some((crs, source, wkt)) = las_spatial_reference(header) {
+        inspection.crs = Some(crs);
+        inspection
+            .metadata
+            .insert("crs_source".into(), json!(source));
+        if let Some(wkt) = wkt {
+            inspection.metadata.insert("crs_wkt".into(), json!(wkt));
+        }
+    }
     Ok(())
+}
+
+fn las_spatial_reference(header: &las::Header) -> Option<(String, &'static str, Option<String>)> {
+    let projection_vlrs = header
+        .all_vlrs()
+        .filter(|vlr| vlr.user_id.trim_end_matches('\0') == "LASF_Projection")
+        .collect::<Vec<_>>();
+    for vlr in &projection_vlrs {
+        if matches!(vlr.record_id, 2111 | 2112) {
+            let wkt = String::from_utf8_lossy(&vlr.data)
+                .trim_matches(['\0', ' '])
+                .to_owned();
+            if let Some(epsg) = epsg_from_wkt(&wkt) {
+                return Some((format!("EPSG:{epsg}"), "las_wkt_vlr", Some(wkt)));
+            }
+        }
+    }
+    for vlr in projection_vlrs {
+        if vlr.record_id == 34735
+            && let Some(epsg) = epsg_from_geokey_directory(&vlr.data)
+        {
+            return Some((format!("EPSG:{epsg}"), "las_geokey_directory", None));
+        }
+    }
+    None
+}
+
+fn epsg_from_wkt(wkt: &str) -> Option<u32> {
+    let upper = wkt.to_ascii_uppercase();
+    let mut epsg = None;
+    let mut offset = 0;
+    while let Some(relative) = upper[offset..].find("EPSG") {
+        let start = offset + relative + 4;
+        let digits = upper[start..]
+            .chars()
+            .skip_while(|character| !character.is_ascii_digit())
+            .take_while(char::is_ascii_digit)
+            .collect::<String>();
+        if let Ok(value) = digits.parse::<u32>() {
+            epsg = Some(value);
+        }
+        offset = start;
+    }
+    epsg
+}
+
+fn epsg_from_geokey_directory(data: &[u8]) -> Option<u16> {
+    if data.len() < 8 || !data.len().is_multiple_of(2) {
+        return None;
+    }
+    let words = data
+        .chunks_exact(2)
+        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+        .collect::<Vec<_>>();
+    if words[0] != 1 {
+        return None;
+    }
+    let key_count = words[3] as usize;
+    let keys = words.get(4..4_usize.checked_add(key_count.checked_mul(4)?)?)?;
+    [3072_u16, 2048_u16].into_iter().find_map(|wanted| {
+        keys.chunks_exact(4).find_map(|key| {
+            (key[0] == wanted && key[1] == 0 && key[2] == 1 && key[3] != 32_767).then_some(key[3])
+        })
+    })
 }
 
 fn inspect_hdf5(path: &Path, inspection: &mut LocalAssetInspection) -> Result<()> {
     let structure = inspect_hdf5_structure(path)?;
     inspection.dimensions = structure.dimensions;
+    apply_hdf5_georeferencing(&structure.datasets, inspection);
     inspection.fields = structure.dataset_paths;
     inspection
         .metadata
@@ -781,6 +920,16 @@ fn cube_descriptors_from_inventory(inventory: &[serde_json::Value]) -> Vec<CubeD
                 .iter()
                 .map(serde_json::Value::as_u64)
                 .collect::<Option<Vec<_>>>()?;
+            let attributes = entry
+                .get("attribute_values")
+                .and_then(serde_json::Value::as_object)
+                .map(|attributes| {
+                    attributes
+                        .iter()
+                        .map(|(name, value)| (name.clone(), value.clone()))
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .unwrap_or_default();
             (shape.len() >= 2).then(|| CubeDescriptor {
                 array_path: entry["path"].as_str().unwrap_or_default().to_owned(),
                 data_type: entry["datatype"].as_str().unwrap_or("unknown").to_owned(),
@@ -793,10 +942,13 @@ fn cube_descriptors_from_inventory(inventory: &[serde_json::Value]) -> Vec<CubeD
                     .as_array()
                     .map(|shape| shape.iter().filter_map(serde_json::Value::as_u64).collect())
                     .unwrap_or_default(),
-                scale_factor: None,
-                add_offset: None,
-                no_data: None,
-                attributes: BTreeMap::new(),
+                scale_factor: hdf5_scale_factor(&attributes),
+                add_offset: hdf5_attribute_f64(&attributes, &["add_offset"]),
+                no_data: hdf5_attribute_f64(
+                    &attributes,
+                    &["data_ignore_value", "_fillvalue", "missing_value"],
+                ),
+                attributes,
             })
         })
         .collect::<Vec<_>>();
@@ -973,6 +1125,13 @@ fn collect_hdf5_datasets(
             "chunk": dataset.chunk(),
             "attributes": dataset.attr_names().unwrap_or_default()
         });
+        let attribute_values = hdf5_attribute_previews(&dataset);
+        if !attribute_values.is_empty() {
+            description["attribute_values"] = json!(attribute_values);
+        }
+        if let Some(value) = hdf5_scalar_string(&dataset) {
+            description["value"] = json!(value);
+        }
         if let Some(values) = hdf5_coordinate_preview(&dataset) {
             description["coordinate_values"] = values;
         }
@@ -1020,6 +1179,330 @@ fn hdf5_coordinate_preview(dataset: &hdf5_metno::Dataset) -> Option<serde_json::
     } else {
         None
     }
+}
+
+fn hdf5_scalar_string(dataset: &hdf5_metno::Dataset) -> Option<String> {
+    use hdf5_metno::types::{FixedAscii, TypeDescriptor, VarLenAscii, VarLenUnicode};
+
+    let name = dataset.name().to_ascii_lowercase();
+    if dataset.size() != 1
+        || ![
+            "coordinate_system_string",
+            "epsg code",
+            "map_info",
+            "proj4",
+            "spatial_ref",
+            "crs_wkt",
+        ]
+        .iter()
+        .any(|candidate| name.ends_with(candidate))
+    {
+        return None;
+    }
+    let datatype = dataset.dtype().ok()?;
+    let descriptor = datatype.to_descriptor().ok()?;
+    let value = match descriptor {
+        TypeDescriptor::VarLenAscii => dataset
+            .read_raw::<VarLenAscii>()
+            .ok()?
+            .first()?
+            .as_str()
+            .to_owned(),
+        TypeDescriptor::VarLenUnicode => dataset
+            .read_raw::<VarLenUnicode>()
+            .ok()?
+            .first()?
+            .as_str()
+            .to_owned(),
+        TypeDescriptor::FixedAscii(length) => {
+            macro_rules! read_fixed {
+                ($length:literal) => {
+                    dataset
+                        .read_raw::<FixedAscii<$length>>()
+                        .ok()?
+                        .first()?
+                        .as_str()
+                        .to_owned()
+                };
+            }
+            match length {
+                1 => read_fixed!(1),
+                6 => read_fixed!(6),
+                16 => read_fixed!(16),
+                32 => read_fixed!(32),
+                63 => read_fixed!(63),
+                64 => read_fixed!(64),
+                128 => read_fixed!(128),
+                256 => read_fixed!(256),
+                395 => read_fixed!(395),
+                512 => read_fixed!(512),
+                1_024 => read_fixed!(1024),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    let value = value.trim_matches(['\0', ' ']).to_owned();
+    (!value.is_empty() && value.len() <= 4_096).then_some(value)
+}
+
+fn hdf5_attribute_previews(dataset: &hdf5_metno::Dataset) -> BTreeMap<String, serde_json::Value> {
+    let mut values = BTreeMap::new();
+    for name in dataset
+        .attr_names()
+        .unwrap_or_default()
+        .into_iter()
+        .take(64)
+    {
+        let lower = name.to_ascii_lowercase();
+        if ![
+            "scale_factor",
+            "add_offset",
+            "data_ignore_value",
+            "_fillvalue",
+            "missing_value",
+            "spatial_extent_meters",
+            "spatial_resolution_x_y",
+            "units_valid_range",
+            "valid_range",
+            "dimensions",
+            "dim",
+        ]
+        .contains(&lower.as_str())
+        {
+            continue;
+        }
+        let Ok(attribute) = dataset.attr(&name) else {
+            continue;
+        };
+        if attribute.size() > 64 {
+            continue;
+        }
+        let Ok(datatype) = attribute.dtype() else {
+            continue;
+        };
+        macro_rules! numeric_attribute {
+            ($type:ty) => {{
+                attribute.read_raw::<$type>().ok().map(|raw| {
+                    if raw.len() == 1 {
+                        json!(raw[0])
+                    } else {
+                        json!(raw)
+                    }
+                })
+            }};
+        }
+        let value = if datatype.is::<u8>() {
+            numeric_attribute!(u8)
+        } else if datatype.is::<u16>() {
+            numeric_attribute!(u16)
+        } else if datatype.is::<u32>() {
+            numeric_attribute!(u32)
+        } else if datatype.is::<u64>() {
+            numeric_attribute!(u64)
+        } else if datatype.is::<i8>() {
+            numeric_attribute!(i8)
+        } else if datatype.is::<i16>() {
+            numeric_attribute!(i16)
+        } else if datatype.is::<i32>() {
+            numeric_attribute!(i32)
+        } else if datatype.is::<i64>() {
+            numeric_attribute!(i64)
+        } else if datatype.is::<f32>() {
+            numeric_attribute!(f32)
+        } else if datatype.is::<f64>() {
+            numeric_attribute!(f64)
+        } else {
+            None
+        };
+        if let Some(value) = value {
+            values.insert(name, value);
+        }
+    }
+    values
+}
+
+fn hdf5_attribute_f64(
+    attributes: &BTreeMap<String, serde_json::Value>,
+    names: &[&str],
+) -> Option<f64> {
+    attributes.iter().find_map(|(name, value)| {
+        names
+            .iter()
+            .any(|candidate| name.eq_ignore_ascii_case(candidate))
+            .then(|| json_first_f64(Some(value)))
+            .flatten()
+    })
+}
+
+fn hdf5_scale_factor(attributes: &BTreeMap<String, serde_json::Value>) -> Option<f64> {
+    if let Some(divisor) = attributes.get("Scale_Factor").and_then(|value| {
+        json_first_f64(Some(value)).filter(|value| value.is_finite() && *value != 0.0)
+    }) {
+        // NEON imaging-spectrometer HDF5 stores a divisor named
+        // `Scale_Factor`; CubeDescriptor stores the multiplicative operation.
+        return Some(1.0 / divisor);
+    }
+    hdf5_attribute_f64(attributes, &["scale_factor"])
+}
+
+fn apply_hdf5_georeferencing(inventory: &serde_json::Value, inspection: &mut LocalAssetInspection) {
+    let Some(entries) = inventory.as_array() else {
+        return;
+    };
+    let epsg = entries.iter().find_map(|entry| {
+        let path = entry.get("path")?.as_str()?.to_ascii_lowercase();
+        let value = entry.get("value")?.as_str()?;
+        path.ends_with("/coordinate_system/epsg code")
+            .then(|| value.trim().parse::<u32>().ok())
+            .flatten()
+    });
+    if let Some(epsg) = epsg {
+        inspection.crs = Some(format!("EPSG:{epsg}"));
+        inspection
+            .metadata
+            .insert("crs_source".into(), json!("hdf5_epsg_code"));
+    }
+    if let Some(wkt) = entries.iter().find_map(|entry| {
+        let path = entry.get("path")?.as_str()?.to_ascii_lowercase();
+        path.ends_with("/coordinate_system/coordinate_system_string")
+            .then(|| entry.get("value")?.as_str())
+            .flatten()
+    }) {
+        inspection.metadata.insert("crs_wkt".into(), json!(wkt));
+    }
+    let map_info = entries.iter().find_map(|entry| {
+        let path = entry.get("path")?.as_str()?.to_ascii_lowercase();
+        path.ends_with("/coordinate_system/map_info")
+            .then(|| entry.get("value")?.as_str())
+            .flatten()
+    });
+    let Some((affine, map_fields)) = map_info.and_then(parse_envi_map_info) else {
+        return;
+    };
+    inspection
+        .metadata
+        .insert("map_info".into(), json!(map_info));
+    let height = inspection.dimensions.first().copied().unwrap_or_default() as f64;
+    let width = inspection.dimensions.get(1).copied().unwrap_or_default() as f64;
+    let computed_bounds = [
+        affine[0],
+        affine[3] + height * affine[5],
+        affine[0] + width * affine[1],
+        affine[3],
+    ];
+    if let Some(spatial_extent) = hdf5_reflectance_spatial_extent(entries) {
+        inspection
+            .metadata
+            .insert("spatial_extent_meters".into(), json!(spatial_extent));
+        let tolerance = affine[1].abs().max(affine[5].abs()) * 0.01;
+        if computed_bounds
+            .iter()
+            .zip(spatial_extent)
+            .any(|(computed, reported)| (computed - reported).abs() > tolerance)
+        {
+            inspection
+                .metadata
+                .insert("map_info_affine_candidate".into(), json!(affine));
+            inspection.warnings.push(
+                "HDF5 Map_Info and Reflectance_Data Spatial_Extent_meters disagree; world-to-pixel linking is disabled"
+                    .into(),
+            );
+            return;
+        }
+    }
+    inspection
+        .metadata
+        .insert("affine_transform".into(), json!(affine));
+    inspection.metadata.insert(
+        "world_to_pixel".into(),
+        json!({
+            "kind": "north_up_affine_v1",
+            "pixel_reference": "upper_left_corner",
+            "x_axis": 1,
+            "y_axis": 0,
+            "x_rounding": "floor",
+            "y_rounding": "floor",
+            "source": "hdf5_map_info",
+            "reference_pixel": map_fields.reference_pixel,
+        }),
+    );
+    if height > 0.0 && width > 0.0 {
+        inspection
+            .metadata
+            .insert("geo_bounds".into(), json!(computed_bounds));
+    }
+}
+
+fn hdf5_reflectance_spatial_extent(entries: &[serde_json::Value]) -> Option<[f64; 4]> {
+    entries.iter().find_map(|entry| {
+        let path = entry.get("path")?.as_str()?.to_ascii_lowercase();
+        if !(path.contains("reflectance") && path.ends_with("reflectance_data")) {
+            return None;
+        }
+        let values = entry
+            .get("attribute_values")?
+            .get("Spatial_Extent_meters")?
+            .as_array()?;
+        if values.len() != 4 {
+            return None;
+        }
+        let source = values
+            .iter()
+            .map(serde_json::Value::as_f64)
+            .collect::<Option<Vec<_>>>()?;
+        // NEON stores [x_min, x_max, y_min, y_max]. WildDatum bounds use
+        // [x_min, y_min, x_max, y_max].
+        Some([source[0], source[2], source[1], source[3]])
+    })
+}
+
+struct EnviMapFields {
+    reference_pixel: [f64; 2],
+}
+
+fn parse_envi_map_info(value: &str) -> Option<([f64; 6], EnviMapFields)> {
+    let parts = value.split(',').map(str::trim).collect::<Vec<_>>();
+    if parts.len() < 7 || !parts[0].eq_ignore_ascii_case("UTM") {
+        return None;
+    }
+    if parts.iter().skip(7).any(|part| {
+        part.strip_prefix("rotation=")
+            .or_else(|| part.strip_prefix("Rotation="))
+            .and_then(|value| value.trim().parse::<f64>().ok())
+            .is_some_and(|rotation| rotation.abs() > f64::EPSILON)
+    }) {
+        return None;
+    }
+    let reference_x = parts[1].parse::<f64>().ok()?;
+    let reference_y = parts[2].parse::<f64>().ok()?;
+    let map_x = parts[3].parse::<f64>().ok()?;
+    let map_y = parts[4].parse::<f64>().ok()?;
+    let pixel_width = parts[5].parse::<f64>().ok()?;
+    let pixel_height = parts[6].parse::<f64>().ok()?;
+    if ![
+        reference_x,
+        reference_y,
+        map_x,
+        map_y,
+        pixel_width,
+        pixel_height,
+    ]
+    .into_iter()
+    .all(f64::is_finite)
+        || pixel_width <= 0.0
+        || pixel_height <= 0.0
+    {
+        return None;
+    }
+    let origin_x = map_x - (reference_x - 1.0) * pixel_width;
+    let origin_y = map_y + (reference_y - 1.0) * pixel_height;
+    Some((
+        [origin_x, pixel_width, 0.0, origin_y, 0.0, -pixel_height],
+        EnviMapFields {
+            reference_pixel: [reference_x, reference_y],
+        },
+    ))
 }
 
 fn inspect_delimited(
@@ -1163,6 +1646,8 @@ mod tests {
 
     #[tokio::test]
     async fn discovers_neon_hdf5_reflectance_axes_from_wavelength_coordinates() {
+        use hdf5_metno::types::FixedAscii;
+
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("reflectance.h5");
         let file = hdf5_metno::File::create(&path).unwrap();
@@ -1173,6 +1658,25 @@ mod tests {
             .create("Reflectance_Data")
             .unwrap();
         dataset.write_raw(&(0_u16..24).collect::<Vec<_>>()).unwrap();
+        dataset
+            .new_attr::<f64>()
+            .create("Scale_Factor")
+            .unwrap()
+            .write_scalar(&10_000.0)
+            .unwrap();
+        dataset
+            .new_attr::<i16>()
+            .create("Data_Ignore_Value")
+            .unwrap()
+            .write_scalar(&-9_999)
+            .unwrap();
+        dataset
+            .new_attr::<f64>()
+            .shape([4])
+            .create("Spatial_Extent_meters")
+            .unwrap()
+            .write_raw(&[256000.0, 256003.0, 4111998.0, 4112000.0])
+            .unwrap();
         let wavelengths = group
             .new_dataset::<f32>()
             .shape([4])
@@ -1181,10 +1685,37 @@ mod tests {
         wavelengths
             .write_raw(&[450.0_f32, 550.0, 650.0, 850.0])
             .unwrap();
+        let coordinate_system = group.create_group("Metadata/Coordinate_System").unwrap();
+        coordinate_system
+            .new_dataset::<FixedAscii<6>>()
+            .shape([1])
+            .create("EPSG Code")
+            .unwrap()
+            .write_raw(&[FixedAscii::<6>::from_ascii(b"32611").unwrap()])
+            .unwrap();
+        coordinate_system
+            .new_dataset::<FixedAscii<128>>()
+            .shape([1])
+            .create("Map_Info")
+            .unwrap()
+            .write_raw(&[FixedAscii::<128>::from_ascii(
+                b"UTM, 1.000, 1.000, 256000.000, 4112000.000, 1.000000e+00, 1.000000e+00, 11, North, WGS-84, units=Meters, 0",
+            )
+            .unwrap()])
+            .unwrap();
         drop(file);
 
         let inspection = inspect_path(&path).await.unwrap();
         assert_eq!(inspection.dimensions, vec![2, 3, 4]);
+        assert_eq!(inspection.crs.as_deref(), Some("EPSG:32611"));
+        assert_eq!(
+            inspection.metadata["affine_transform"],
+            json!([256000.0, 1.0, 0.0, 4112000.0, 0.0, -1.0])
+        );
+        assert_eq!(
+            inspection.metadata["world_to_pixel"]["pixel_reference"],
+            "upper_left_corner"
+        );
         assert!(inspection.requires_mapping);
         assert!(
             inspection
@@ -1200,9 +1731,57 @@ mod tests {
         assert_eq!(descriptor["axes"][0]["role"], "y");
         assert_eq!(descriptor["axes"][1]["role"], "x");
         assert_eq!(descriptor["axes"][2]["role"], "spectral");
+        assert_eq!(descriptor["scale_factor"], 0.0001);
+        assert_eq!(descriptor["no_data"], -9_999.0);
         assert_eq!(
             descriptor["axes"][2]["coordinate_path"],
             "/HARV/Reflectance/Wavelength"
         );
+
+        let file = hdf5_metno::File::open_rw(&path).unwrap();
+        file.dataset("/HARV/Reflectance/Reflectance_Data")
+            .unwrap()
+            .attr("Spatial_Extent_meters")
+            .unwrap()
+            .write_raw(&[256500.0, 256503.0, 4111998.0, 4112000.0])
+            .unwrap();
+        drop(file);
+        let inconsistent = inspect_path(&path).await.unwrap();
+        assert!(!inconsistent.metadata.contains_key("world_to_pixel"));
+        assert!(!inconsistent.metadata.contains_key("affine_transform"));
+        assert!(
+            inconsistent
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("Spatial_Extent_meters disagree"))
+        );
+    }
+
+    #[tokio::test]
+    async fn discovers_las_epsg_from_the_geokey_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("points.las");
+        let mut header = las::Builder::default();
+        let words = [1_u16, 1, 0, 1, 3072, 0, 1, 32611];
+        header.vlrs.push(las::Vlr {
+            user_id: "LASF_Projection".into(),
+            record_id: 34735,
+            description: "GeoKeyDirectoryTag".into(),
+            data: words.into_iter().flat_map(u16::to_le_bytes).collect(),
+        });
+        let mut writer = las::Writer::from_path(&path, header.into_header().unwrap()).unwrap();
+        writer
+            .write_point(las::Point {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+                ..Default::default()
+            })
+            .unwrap();
+        writer.close().unwrap();
+
+        let inspection = inspect_path(&path).await.unwrap();
+        assert_eq!(inspection.crs.as_deref(), Some("EPSG:32611"));
+        assert_eq!(inspection.metadata["crs_source"], "las_geokey_directory");
     }
 }

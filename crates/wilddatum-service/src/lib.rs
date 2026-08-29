@@ -262,15 +262,12 @@ impl WildDatumService {
     }
 
     pub fn enrich_manifest_metadata(&self, manifest: &mut DatasetManifest) {
+        let mut inspected_modalities = Vec::new();
+        let mut spatial_references = Vec::new();
+        let mut cubes: Vec<wilddatum_core::CubeDescriptor> = Vec::new();
+        let mut warnings = Vec::new();
+        let single_source = manifest.source_files.len() == 1;
         for source in &mut manifest.source_files {
-            let extension = Path::new(&source.original_name)
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            if !matches!(extension.as_str(), "h5" | "hdf5") {
-                continue;
-            }
             let Some(object) = &source.local_object else {
                 continue;
             };
@@ -284,14 +281,37 @@ impl WildDatumService {
                     continue;
                 }
             };
-            match wilddatum_local_import::inspect_hdf5_structure(&path) {
-                Ok(structure) => {
+            match wilddatum_local_import::inspect_scientific_metadata(&path, &source.original_name)
+            {
+                Ok(inspection) => {
                     source
                         .metadata
-                        .insert("dimensions".into(), json!(structure.dimensions));
-                    source
+                        .insert("dimensions".into(), json!(inspection.dimensions));
+                    source.metadata.extend(inspection.metadata.clone());
+                    inspected_modalities.extend(inspection.modalities);
+                    if let Some(reference) = spatial_reference_from_metadata(
+                        inspection.crs.as_deref(),
+                        &inspection.metadata,
+                    ) {
+                        spatial_references.push(reference);
+                    }
+                    if let Some(descriptors) = inspection
                         .metadata
-                        .insert("hdf5_datasets".into(), structure.datasets);
+                        .get("cube_descriptors")
+                        .cloned()
+                        .and_then(|value| serde_json::from_value::<Vec<_>>(value).ok())
+                    {
+                        cubes.extend(descriptors);
+                    }
+                    warnings.extend(inspection.warnings);
+                    if single_source && manifest.format.is_none() {
+                        manifest.format = Some(wilddatum_core::FormatDescriptor {
+                            name: inspection.format,
+                            version: None,
+                            profile: None,
+                            options: BTreeMap::new(),
+                        });
+                    }
                 }
                 Err(error) => {
                     source.metadata.insert(
@@ -300,6 +320,35 @@ impl WildDatumService {
                     );
                 }
             }
+        }
+        for modality in inspected_modalities {
+            if modality != Modality::Unknown && !manifest.modalities.contains(&modality) {
+                manifest.modalities.push(modality);
+            }
+        }
+        cubes.sort_by(|left, right| left.array_path.cmp(&right.array_path));
+        cubes.dedup_by(|left, right| left.array_path == right.array_path);
+        if !cubes.is_empty() {
+            manifest.cubes = cubes;
+        }
+        spatial_references.sort_by_key(spatial_reference_key);
+        spatial_references
+            .dedup_by(|left, right| spatial_reference_key(left) == spatial_reference_key(right));
+        if spatial_references.len() == 1 {
+            manifest.spatial_reference = spatial_references.pop();
+        } else if spatial_references.len() > 1 {
+            manifest.spatial_reference = None;
+            warnings.push(
+                "Materialized source files declare incompatible coordinate reference systems"
+                    .into(),
+            );
+        }
+        if !warnings.is_empty() {
+            warnings.sort();
+            warnings.dedup();
+            manifest
+                .provider_metadata
+                .insert("physical_inspection_warnings".into(), json!(warnings));
         }
     }
 
@@ -349,19 +398,10 @@ impl WildDatumService {
                     .map(str::to_owned),
                 options: BTreeMap::new(),
             }),
-            spatial_reference: inspection.crs.as_ref().map(|crs| {
-                let (authority, code) = crs
-                    .split_once(':')
-                    .map_or((None, Some(crs.clone())), |(authority, code)| {
-                        (Some(authority.to_owned()), Some(code.to_owned()))
-                    });
-                wilddatum_core::SpatialReference {
-                    authority,
-                    code,
-                    wkt: None,
-                    axis_order: vec![],
-                }
-            }),
+            spatial_reference: spatial_reference_from_metadata(
+                inspection.crs.as_deref(),
+                &inspection.metadata,
+            ),
             cube: None,
             cubes: inspection
                 .metadata
@@ -616,17 +656,39 @@ impl WildDatumService {
                 );
                 encoding.insert("coordinate_space".into(), json!("source"));
             }
-            if modality == Modality::Raster
-                && let Some(transform) = manifest
-                    .source_files
-                    .first()
-                    .and_then(|source| source.metadata.get("affine_transform"))
+            if matches!(
+                modality,
+                Modality::Raster | Modality::Hyperspectral | Modality::Tensor
+            ) && let Some(transform) = manifest
+                .source_files
+                .first()
+                .and_then(|source| source.metadata.get("affine_transform"))
             {
                 encoding.insert("affine_transform".into(), transform.clone());
                 encoding.insert("preview_stride".into(), json!([1, 1]));
+                if let Some(world_to_pixel) = manifest
+                    .source_files
+                    .first()
+                    .and_then(|source| source.metadata.get("world_to_pixel"))
+                {
+                    encoding.insert("world_to_pixel".into(), world_to_pixel.clone());
+                }
+                if let Some(geo_bounds) = manifest
+                    .source_files
+                    .first()
+                    .and_then(|source| source.metadata.get("geo_bounds"))
+                {
+                    encoding.insert("geo_bounds".into(), geo_bounds.clone());
+                }
             }
-            if matches!(modality, Modality::Raster | Modality::Vector)
-                && let Some(spatial_reference) = &manifest.spatial_reference
+            if matches!(
+                modality,
+                Modality::PointCloud
+                    | Modality::Raster
+                    | Modality::Vector
+                    | Modality::Hyperspectral
+                    | Modality::Tensor
+            ) && let Some(spatial_reference) = &manifest.spatial_reference
             {
                 let crs = match (&spatial_reference.authority, &spatial_reference.code) {
                     (Some(authority), Some(code)) => format!("{authority}:{code}"),
@@ -964,6 +1026,36 @@ fn enrich_cube_encoding(manifest: &DatasetManifest, encoding: &mut BTreeMap<Stri
     );
 }
 
+fn spatial_reference_from_metadata(
+    crs: Option<&str>,
+    metadata: &BTreeMap<String, Value>,
+) -> Option<wilddatum_core::SpatialReference> {
+    let crs = crs?;
+    let (authority, code) = crs
+        .split_once(':')
+        .map_or((None, Some(crs.to_owned())), |(authority, code)| {
+            (Some(authority.to_owned()), Some(code.to_owned()))
+        });
+    Some(wilddatum_core::SpatialReference {
+        authority,
+        code,
+        wkt: metadata
+            .get("crs_wkt")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        axis_order: vec![],
+    })
+}
+
+fn spatial_reference_key(reference: &wilddatum_core::SpatialReference) -> String {
+    format!(
+        "{}:{}:{}",
+        reference.authority.as_deref().unwrap_or_default(),
+        reference.code.as_deref().unwrap_or_default(),
+        reference.wkt.as_deref().unwrap_or_default()
+    )
+}
+
 fn primary_view_modality(modalities: &[Modality]) -> Modality {
     [
         Modality::PointCloud,
@@ -1107,5 +1199,77 @@ mod tests {
             service.patch_view(&view.view_id.0, 1, json!({"name": "stale"})),
             Err(WildDatumError::Conflict(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn enriches_materialized_provider_cubes_from_verified_objects() {
+        use hdf5_metno::types::FixedAscii;
+
+        let (directory, service) = service();
+        let path = directory.path().join("reflectance.h5");
+        let file = hdf5_metno::File::create(&path).unwrap();
+        let group = file.create_group("SITE/Reflectance").unwrap();
+        group
+            .new_dataset::<u16>()
+            .shape([2, 3, 4])
+            .create("Reflectance_Data")
+            .unwrap()
+            .write_raw(&(0_u16..24).collect::<Vec<_>>())
+            .unwrap();
+        group
+            .new_dataset::<f32>()
+            .shape([4])
+            .create("Wavelength")
+            .unwrap()
+            .write_raw(&[450.0_f32, 550.0, 650.0, 850.0])
+            .unwrap();
+        let coordinates = group.create_group("Metadata/Coordinate_System").unwrap();
+        coordinates
+            .new_dataset::<FixedAscii<6>>()
+            .shape([1])
+            .create("EPSG Code")
+            .unwrap()
+            .write_raw(&[FixedAscii::<6>::from_ascii(b"32611").unwrap()])
+            .unwrap();
+        coordinates
+            .new_dataset::<FixedAscii<128>>()
+            .shape([1])
+            .create("Map_Info")
+            .unwrap()
+            .write_raw(&[FixedAscii::<128>::from_ascii(
+                b"UTM, 1, 1, 0, 4, 1, 1, 11, North, WGS-84, units=Meters, 0",
+            )
+            .unwrap()])
+            .unwrap();
+        drop(file);
+
+        let mut manifest = service.import_local_file(&path).await.unwrap();
+        manifest.provider = ProviderKind::Other("fixture-ri".into());
+        manifest.modalities = vec![Modality::Unknown];
+        manifest.spatial_reference = None;
+        manifest.cubes.clear();
+        manifest.format = None;
+        manifest.source_files[0].metadata.clear();
+        manifest.source_files[0].local_object = Some("reflectance-object".into());
+        let object_dir = service.paths().provider_objects_dir(&manifest.provider);
+        std::fs::create_dir_all(&object_dir).unwrap();
+        std::fs::copy(&path, object_dir.join("reflectance-object")).unwrap();
+
+        service.enrich_manifest_metadata(&mut manifest);
+        assert_eq!(
+            manifest.spatial_reference.as_ref().unwrap().code.as_deref(),
+            Some("32611")
+        );
+        assert_eq!(manifest.cubes.len(), 1);
+        assert_eq!(
+            manifest.cubes[0].axes[2].role,
+            wilddatum_core::AxisRole::Spectral
+        );
+        assert!(manifest.modalities.contains(&Modality::Hyperspectral));
+        assert_eq!(manifest.format.as_ref().unwrap().name, "h5");
+        assert_eq!(
+            manifest.source_files[0].metadata["world_to_pixel"]["kind"],
+            "north_up_affine_v1"
+        );
     }
 }

@@ -580,6 +580,8 @@ pub struct ResolvedViewLink {
     pub exactness: LinkExactness,
     pub status: LinkResolutionStatus,
     pub explanation: String,
+    #[serde(default)]
+    pub derived_selection: Option<SemanticSelection>,
     pub result: Option<LinkedResultSummary>,
 }
 
