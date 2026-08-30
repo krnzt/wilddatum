@@ -410,9 +410,10 @@ MCP input across providers.
   dimensions or translate arbitrary polygons. Use typed tabledap constraints or
   griddap slices. CF profile roles are preserved, but choosing the scientific
   value/QC policy remains an explicit recipe rather than an automatic guess.
-- Linked profile rendering currently accepts CSV/TSV, one displayed value field,
-  and at most 100,000 source rows. Rerun's raw-value 2D aspect can make a narrow
-  value range look horizontally compressed against a deep vertical range.
+- Linked profile rendering accepts up to eight displayed values from CSV/TSV,
+  Parquet/GeoParquet, Arrow IPC, or Feather, but rejects sources above 100,000
+  rows rather than streaming or tiling them. Rerun's raw-value 2D aspect can make
+  a narrow value range look horizontally compressed against a deep vertical range.
 - The pure-Rust NetCDF-3 adapter bounds whole-variable decoding because its
   reader does not currently provide subset I/O.
 
