@@ -1204,6 +1204,9 @@ mod tests {
                         accepted_qc: vec!["1".into(), "2".into()],
                         fill_values: vec![],
                     },
+                    additional_values: vec![],
+                    vertical_range: None,
+                    max_points_per_profile: None,
                 },
             )
             .unwrap();

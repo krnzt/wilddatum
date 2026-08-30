@@ -14,9 +14,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use wilddatum_core::{
     CredentialRef, DatasetId, DatasetQuery, DatasetRequest, ExportFormat, ExportRequest, JobStatus,
-    MAX_MCP_RESULT_BYTES, ProfileTrajectoryRecipeV1, ProfileValueSpec, ProviderCapability,
-    ProviderKind, ProviderManifest, ProviderStatus, ResourceQuery, ResultId, SemanticSelection,
-    VerticalAxisSpec, VerticalDirection, WildDatumError,
+    MAX_MCP_RESULT_BYTES, NumericRange, ProfileTrajectoryRecipeV1, ProfileValueSpec,
+    ProviderCapability, ProviderKind, ProviderManifest, ProviderStatus, ResourceQuery, ResultId,
+    SemanticSelection, VerticalAxisSpec, VerticalDirection, WildDatumError,
 };
 use wilddatum_provider_api::{
     EcologicalDataProvider, PROVIDER_PROTOCOL_VERSION, validate_manifest,
@@ -371,6 +371,10 @@ pub struct ConfigureProfileTrajectoryInput {
     pub accepted_qc: Vec<String>,
     #[serde(default)]
     pub value_fill_values: Vec<String>,
+    #[serde(default)]
+    pub additional_values: Vec<ProfileValueSpec>,
+    pub vertical_range: Option<NumericRange>,
+    pub max_points_per_profile: Option<u32>,
 }
 
 fn default_y_axis() -> u32 {
@@ -964,7 +968,7 @@ impl WildDatumMcp {
     }
 
     #[tool(
-        description = "Configure a validated linked map and vertical-profile view over a CSV/TSV layer, with exact source-row selection semantics"
+        description = "Configure validated linked map and multi-value vertical-profile views over CSV, TSV, Parquet, or Arrow, with exact source-row selection, optional vertical range, and profile-aware downsampling"
     )]
     async fn configure_profile_trajectory_view(
         &self,
@@ -989,6 +993,9 @@ impl WildDatumMcp {
                 accepted_qc: input.accepted_qc,
                 fill_values: input.value_fill_values,
             },
+            additional_values: input.additional_values,
+            vertical_range: input.vertical_range,
+            max_points_per_profile: input.max_points_per_profile,
         };
         match self.service.configure_profile_trajectory_view(
             &input.view_id,

@@ -16,8 +16,8 @@ wilddatum-core = { path = "../wilddatum-core" }
 geodatafusion.workspace = true
 geodatafusion-geoparquet.workspace = true
 serde_json.workspace = true
+parquet.workspace = true
 
 [dev-dependencies]
-parquet.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

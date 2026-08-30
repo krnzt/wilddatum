@@ -36,7 +36,7 @@ struct BlueprintLayer {
 #[derive(Debug)]
 enum BlueprintLayerKind {
     Modality(Modality),
-    ProfileTrajectory { value_field: String },
+    ProfileTrajectory { value_fields: Vec<String> },
 }
 
 pub fn write_recording(
@@ -85,9 +85,10 @@ pub fn write_recording_with_link_resolution(
             entity_root: entity_root.clone(),
             kind: if is_profile_trajectory {
                 BlueprintLayerKind::ProfileTrajectory {
-                    value_field: tabular::profile_value_field(&layer.encoding)
-                        .unwrap_or("value")
-                        .to_owned(),
+                    value_fields: tabular::profile_value_fields(&layer.encoding)
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect(),
                 }
             } else {
                 BlueprintLayerKind::Modality(layer.modality.clone())
@@ -239,7 +240,7 @@ fn layer_blueprints(layers: Vec<BlueprintLayer>) -> Vec<ContainerLike> {
         let name = layer.name;
         let root = layer.entity_root;
         match layer.kind {
-            BlueprintLayerKind::ProfileTrajectory { value_field } => {
+            BlueprintLayerKind::ProfileTrajectory { value_fields } => {
                 let map = ContainerLike::from(
                     MapView::new(format!("{name} map"))
                         .with_origin(root.clone())
@@ -248,15 +249,24 @@ fn layer_blueprints(layers: Vec<BlueprintLayer>) -> Vec<ContainerLike> {
                             format!("{root}/trajectory_lines"),
                         ]),
                 );
-                let profile = ContainerLike::from(
-                    Spatial2DView::new(format!("{value_field} profile"))
-                        .with_origin(root.clone())
-                        .with_contents([
-                            format!("{root}/profile_observations"),
-                            format!("{root}/profile_lines"),
-                        ]),
-                );
-                contents.push(ContainerLike::from(Horizontal::new([map, profile])));
+                let mut linked_panels = vec![map];
+                linked_panels.extend(value_fields.iter().enumerate().map(|(index, field)| {
+                    ContainerLike::from(
+                        Spatial2DView::new(format!("{field} profile"))
+                            .with_origin(root.clone())
+                            .with_contents([
+                                format!(
+                                    "{root}/{}",
+                                    wilddatum_core::profile_observation_suffix(index, field)
+                                ),
+                                format!(
+                                    "{root}/{}",
+                                    wilddatum_core::profile_line_suffix(index, field)
+                                ),
+                            ]),
+                    )
+                }));
+                contents.push(ContainerLike::from(Horizontal::new(linked_panels)));
             }
             BlueprintLayerKind::Modality(modality) => {
                 let layer_contents = [format!("{root}/**")];

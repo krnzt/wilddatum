@@ -4,7 +4,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use tracing_subscriber::EnvFilter;
 use wilddatum_core::{
-    DatasetId, ProfileTrajectoryRecipeV1, ProfileValueSpec, VerticalAxisSpec, VerticalDirection,
+    DatasetId, NumericRange, ProfileTrajectoryRecipeV1, ProfileValueSpec, VerticalAxisSpec,
+    VerticalDirection,
 };
 use wilddatum_provider_api::EcologicalDataProvider;
 use wilddatum_provider_process::{ProcessProvider, ProcessProviderConfig, discover_configs};
@@ -223,6 +224,15 @@ struct ConfigureProfileTrajectoryArgs {
     accepted_qc: Vec<String>,
     #[arg(long = "value-fill-value")]
     value_fill_values: Vec<String>,
+    /// Additional ProfileValueSpec JSON object; repeat for linked value panels.
+    #[arg(long = "additional-value-json")]
+    additional_value_json: Vec<String>,
+    #[arg(long)]
+    vertical_min: Option<f64>,
+    #[arg(long)]
+    vertical_max: Option<f64>,
+    #[arg(long)]
+    max_points_per_profile: Option<u32>,
 }
 
 impl From<VerticalDirectionArg> for VerticalDirection {
@@ -401,7 +411,23 @@ async fn main() -> Result<()> {
                 qc_field,
                 accepted_qc,
                 value_fill_values,
+                additional_value_json,
+                vertical_min,
+                vertical_max,
+                max_points_per_profile,
             } = *options;
+            let additional_values = additional_value_json
+                .into_iter()
+                .map(|value| {
+                    serde_json::from_str::<ProfileValueSpec>(&value)
+                        .with_context(|| format!("invalid --additional-value-json: {value}"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let vertical_range = match (vertical_min, vertical_max) {
+                (Some(minimum), Some(maximum)) => Some(NumericRange { minimum, maximum }),
+                (None, None) => None,
+                _ => bail!("--vertical-min and --vertical-max must be supplied together"),
+            };
             let view = service.get_view(&view_id)?;
             let configured = service.configure_profile_trajectory_view(
                 &view_id,
@@ -426,6 +452,9 @@ async fn main() -> Result<()> {
                         accepted_qc,
                         fill_values: value_fill_values,
                     },
+                    additional_values,
+                    vertical_range,
+                    max_points_per_profile,
                 },
             )?;
             print_json(&configured)?;
@@ -792,6 +821,14 @@ mod tests {
             "1",
             "--accept-qc",
             "2",
+            "--additional-value-json",
+            r#"{"field":"psal_adjusted","unit":"1e-3","qc_field":"psal_adjusted_qc","accepted_qc":["1","2"],"fill_values":[]}"#,
+            "--vertical-min",
+            "10",
+            "--vertical-max",
+            "700",
+            "--max-points-per-profile",
+            "200",
         ])
         .unwrap();
         let Commands::ConfigureProfileTrajectory(options) = cli.command else {
@@ -800,6 +837,10 @@ mod tests {
         let ConfigureProfileTrajectoryArgs {
             accepted_qc,
             vertical_direction,
+            additional_value_json,
+            vertical_min,
+            vertical_max,
+            max_points_per_profile,
             ..
         } = *options;
         assert_eq!(accepted_qc, ["1", "2"]);
@@ -807,5 +848,9 @@ mod tests {
             vertical_direction,
             VerticalDirectionArg::PositiveDown
         ));
+        assert_eq!(additional_value_json.len(), 1);
+        assert_eq!(vertical_min, Some(10.0));
+        assert_eq!(vertical_max, Some(700.0));
+        assert_eq!(max_points_per_profile, Some(200));
     }
 }

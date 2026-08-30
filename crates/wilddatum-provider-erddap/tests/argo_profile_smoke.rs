@@ -159,6 +159,9 @@ async fn live_smoke() -> Result<()> {
                 accepted_qc: vec!["1".into(), "2".into()],
                 fill_values: fields.value_fills,
             },
+            additional_values: vec![],
+            vertical_range: None,
+            max_points_per_profile: None,
         },
     )?;
     let recording = directory.path().join("euro-argo-profile.rrd");

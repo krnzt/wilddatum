@@ -38,3 +38,6 @@ tracing.workspace = true
 uuid.workspace = true
 wkt.workspace = true
 zarrs.workspace = true
+
+[dev-dependencies]
+arrow-ipc.workspace = true

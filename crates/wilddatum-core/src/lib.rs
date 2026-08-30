@@ -4,9 +4,10 @@ pub mod profile_trajectory;
 pub mod scientific;
 
 pub use profile_trajectory::{
-    PROFILE_TRAJECTORY_OBSERVATION_SUFFIXES, PROFILE_TRAJECTORY_VIEW_KIND,
-    ProfileTrajectoryRecipeV1, ProfileValueSpec, SourceRowSelectionMapping, VerticalAxisSpec,
-    VerticalDirection,
+    MAX_PROFILE_TRAJECTORY_ROWS, NumericRange, PROFILE_TRAJECTORY_OBSERVATION_SUFFIXES,
+    PROFILE_TRAJECTORY_VIEW_KIND, ProfileTrajectoryRecipeV1, ProfileValueSpec,
+    SourceRowSelectionMapping, VerticalAxisSpec, VerticalDirection, profile_line_suffix,
+    profile_observation_suffix,
 };
 pub use scientific::{
     CoordinateSummary, InferenceConfidence, LinkExactness, SCIENTIFIC_INVENTORY_VERSION,

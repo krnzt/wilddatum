@@ -2,10 +2,10 @@
 
 use std::{collections::BTreeSet, path::Path};
 
-use serde_json::json;
+use serde_json::{Value, json};
 use wilddatum_core::{
-    EcoViewSpec, Modality, ProfileTrajectoryRecipeV1, Result, SourceRowSelectionMapping,
-    WildDatumError,
+    EcoViewSpec, MAX_PROFILE_TRAJECTORY_ROWS, Modality, ProfileTrajectoryRecipeV1, Result,
+    SourceRowSelectionMapping, WildDatumError,
 };
 
 use super::WildDatumService;
@@ -40,9 +40,38 @@ impl WildDatumService {
                 "layer {layer_id} is not tabular, time-series, or trajectory data"
             )));
         }
-        if !recipe.value.accepted_qc.is_empty() && recipe.value.qc_field.is_none() {
+        if recipe.values().count() > 8 {
             return Err(WildDatumError::Invalid(
-                "accepted_qc requires value.qc_field".into(),
+                "profile/trajectory views support at most eight value fields".into(),
+            ));
+        }
+        let mut value_fields = BTreeSet::new();
+        for value in recipe.values() {
+            if !value_fields.insert(value.field.as_str()) {
+                return Err(WildDatumError::Invalid(format!(
+                    "profile/trajectory value field {} is duplicated",
+                    value.field
+                )));
+            }
+            if !value.accepted_qc.is_empty() && value.qc_field.is_none() {
+                return Err(WildDatumError::Invalid(format!(
+                    "accepted_qc requires a qc_field for value {}",
+                    value.field
+                )));
+            }
+        }
+        if let Some(range) = recipe.vertical_range
+            && (!range.minimum.is_finite()
+                || !range.maximum.is_finite()
+                || range.minimum > range.maximum)
+        {
+            return Err(WildDatumError::Invalid(
+                "vertical_range requires finite minimum <= maximum".into(),
+            ));
+        }
+        if recipe.max_points_per_profile == Some(0) {
+            return Err(WildDatumError::Invalid(
+                "max_points_per_profile must be positive".into(),
             ));
         }
 
@@ -52,12 +81,17 @@ impl WildDatumService {
             .first()
             .ok_or_else(|| WildDatumError::Invalid("dataset has no source files".into()))?;
         let path = self.source_path_for_renderer(&manifest, source)?;
-        validate_delimited_recipe(&path, &source.original_name, &recipe)?;
+        let source_identity = validate_profile_source(&path, &source.original_name, &recipe)?;
 
         let mut encoding = recipe.encoding();
+        encoding.insert("source_row_identity".into(), json!(source_identity));
         encoding.insert(
             "selection_mapping".into(),
-            json!(SourceRowSelectionMapping::profile_trajectory_v1()),
+            json!(
+                SourceRowSelectionMapping::profile_trajectory_v1_with_values(
+                    recipe.values().map(|value| value.field.as_str()),
+                )
+            ),
         );
         layer.encoding = encoding;
         view.revision += 1;
@@ -66,90 +100,81 @@ impl WildDatumService {
     }
 }
 
-fn validate_delimited_recipe(
+fn validate_profile_source(
     path: &Path,
     original_name: &str,
     recipe: &ProfileTrajectoryRecipeV1,
-) -> Result<()> {
-    let extension = Path::new(original_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let delimiter = match extension.as_str() {
-        "csv" => b',',
-        "tsv" => b'\t',
-        _ => {
-            return Err(WildDatumError::Invalid(format!(
-                "profile/trajectory views currently support CSV and TSV sources; got {extension}"
-            )));
-        }
-    };
-    let mut reader = csv::ReaderBuilder::new()
-        .delimiter(delimiter)
-        .flexible(false)
-        .from_path(path)
-        .map_err(csv_error)?;
-    let headers = reader.headers().map_err(csv_error)?.clone();
+) -> Result<&'static str> {
+    let table =
+        wilddatum_query::read_source_table(path, original_name, MAX_PROFILE_TRAJECTORY_ROWS)?;
+    if table.rows.is_empty() {
+        return Err(WildDatumError::Invalid(
+            "profile/trajectory source contains no data rows".into(),
+        ));
+    }
     let configured = [
         recipe.trajectory_id_field.as_str(),
         recipe.profile_id_field.as_str(),
         recipe.latitude_field.as_str(),
         recipe.longitude_field.as_str(),
         recipe.vertical.field.as_str(),
-        recipe.value.field.as_str(),
     ]
     .into_iter()
     .chain(recipe.time_field.as_deref())
-    .chain(recipe.value.qc_field.as_deref())
+    .chain(recipe.values().map(|value| value.field.as_str()))
+    .chain(
+        recipe
+            .values()
+            .filter_map(|value| value.qc_field.as_deref()),
+    )
     .collect::<BTreeSet<_>>();
     for field in &configured {
-        if field.is_empty() || !headers.iter().any(|header| header == *field) {
+        if field.is_empty() || !table.columns.iter().any(|header| header == *field) {
             return Err(WildDatumError::Invalid(format!(
                 "profile/trajectory field {field:?} is absent from {original_name}"
             )));
         }
     }
-    let position = |field: &str| {
-        headers
-            .iter()
-            .position(|header| header == field)
-            .expect("configured header validated above")
-    };
-    let numeric_fields = [
-        ("latitude", position(&recipe.latitude_field), &[][..]),
-        ("longitude", position(&recipe.longitude_field), &[][..]),
+    let mut numeric_fields = vec![
         (
-            "vertical",
-            position(&recipe.vertical.field),
+            "latitude".to_owned(),
+            recipe.latitude_field.as_str(),
+            &[][..],
+        ),
+        (
+            "longitude".to_owned(),
+            recipe.longitude_field.as_str(),
+            &[][..],
+        ),
+        (
+            "vertical".to_owned(),
+            recipe.vertical.field.as_str(),
             recipe.vertical.fill_values.as_slice(),
         ),
-        (
-            "value",
-            position(&recipe.value.field),
-            recipe.value.fill_values.as_slice(),
-        ),
     ];
-    let mut found_numeric = [false; 4];
-    for record in reader.records() {
-        let record = record.map_err(csv_error)?;
-        for (slot, (_, column, fill_values)) in numeric_fields.iter().enumerate() {
-            found_numeric[slot] |= record
-                .get(*column)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .filter(|value| !fill_values.iter().any(|fill| fill.trim() == *value))
-                .and_then(|value| value.parse::<f64>().ok())
-                .is_some_and(f64::is_finite);
+    numeric_fields.extend(recipe.values().map(|value| {
+        (
+            format!("value {}", value.field),
+            value.field.as_str(),
+            value.fill_values.as_slice(),
+        )
+    }));
+    let mut found_numeric = vec![false; numeric_fields.len()];
+    for row in &table.rows {
+        for (slot, (_, field, fill_values)) in numeric_fields.iter().enumerate() {
+            found_numeric[slot] |= row
+                .get(*field)
+                .and_then(|value| finite_source_number(value, fill_values))
+                .is_some();
         }
-        if found_numeric.into_iter().all(|found| found) {
+        if found_numeric.iter().all(|found| *found) {
             break;
         }
     }
     let invalid = numeric_fields
         .iter()
         .zip(found_numeric)
-        .filter_map(|((role, _, _), found)| (!found).then_some(*role))
+        .filter_map(|((role, _, _), found)| (!found).then_some(role.as_str()))
         .collect::<Vec<_>>();
     if !invalid.is_empty() {
         return Err(WildDatumError::Invalid(format!(
@@ -157,13 +182,27 @@ fn validate_delimited_recipe(
             invalid.join(", ")
         )));
     }
-    Ok(())
+    Ok(table.identity)
 }
 
-fn csv_error(error: csv::Error) -> WildDatumError {
-    WildDatumError::Invalid(format!(
-        "cannot validate profile/trajectory source: {error}"
-    ))
+fn finite_source_number(value: &Value, fill_values: &[String]) -> Option<f64> {
+    let number = if let Some(number) = value.as_f64() {
+        if fill_values
+            .iter()
+            .filter_map(|fill| fill.trim().parse::<f64>().ok())
+            .any(|fill| fill == number)
+        {
+            return None;
+        }
+        number
+    } else {
+        let text = value.as_str()?.trim();
+        if text.is_empty() || fill_values.iter().any(|fill| fill.trim() == text) {
+            return None;
+        }
+        text.parse().ok()?
+    };
+    number.is_finite().then_some(number)
 }
 
 #[cfg(test)]
@@ -207,6 +246,9 @@ mod tests {
                 accepted_qc: vec!["1".into(), "2".into()],
                 fill_values: vec![],
             },
+            additional_values: vec![],
+            vertical_range: None,
+            max_points_per_profile: None,
         }
     }
 
@@ -343,5 +385,124 @@ mod tests {
                 .to_string()
                 .contains("not tabular, time-series, or trajectory")
         );
+    }
+
+    #[tokio::test]
+    async fn parquet_and_arrow_profiles_keep_exact_rows_across_multiple_values() {
+        use std::{fs::File, sync::Arc};
+
+        use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
+        use arrow_ipc::writer::FileWriter;
+        use arrow_schema::{DataType, Field, Schema};
+        use parquet::arrow::ArrowWriter;
+        use serde_json::json;
+        use wilddatum_core::{NumericRange, SemanticSelection};
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("platform", DataType::Utf8, false),
+            Field::new("cycle", DataType::Int64, false),
+            Field::new("time", DataType::Utf8, false),
+            Field::new("latitude", DataType::Float64, false),
+            Field::new("longitude", DataType::Float64, false),
+            Field::new("pressure", DataType::Float64, false),
+            Field::new("temperature", DataType::Float64, false),
+            Field::new("temperature_qc", DataType::Utf8, false),
+            Field::new("salinity", DataType::Float64, false),
+            Field::new("salinity_qc", DataType::Utf8, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["F1", "F1", "F1", "F1"])) as ArrayRef,
+                Arc::new(arrow_array::Int64Array::from(vec![1, 1, 1, 1])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["t0", "t1", "t2", "t3"])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![34.0, 34.1, 34.2, 34.3])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![-75.0, -75.1, -75.2, -75.3])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![0.0, 10.0, 20.0, 30.0])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![18.0, 17.0, 16.0, 15.0])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["1", "1", "1", "1"])) as ArrayRef,
+                Arc::new(Float64Array::from(vec![35.0, 35.1, 35.2, 35.3])) as ArrayRef,
+                Arc::new(StringArray::from(vec!["1", "1", "2", "1"])) as ArrayRef,
+            ],
+        )
+        .unwrap();
+
+        for extension in ["parquet", "arrow"] {
+            let (directory, service) = service();
+            let path = directory.path().join(format!("profile.{extension}"));
+            if extension == "parquet" {
+                let mut writer =
+                    ArrowWriter::try_new(File::create(&path).unwrap(), schema.clone(), None)
+                        .unwrap();
+                writer.write(&batch).unwrap();
+                writer.close().unwrap();
+            } else {
+                let mut writer =
+                    FileWriter::try_new(File::create(&path).unwrap(), &schema).unwrap();
+                writer.write(&batch).unwrap();
+                writer.finish().unwrap();
+            }
+            let manifest = service.import_local_file(&path).await.unwrap();
+            let view = service
+                .create_view(
+                    "structured profile".into(),
+                    vec![manifest.dataset_id.clone()],
+                )
+                .unwrap();
+            let mut recipe = recipe();
+            recipe.additional_values = vec![wilddatum_core::ProfileValueSpec {
+                field: "salinity".into(),
+                unit: Some("1e-3".into()),
+                qc_field: Some("salinity_qc".into()),
+                accepted_qc: vec!["1".into(), "2".into()],
+                fill_values: vec![],
+            }];
+            recipe.vertical_range = Some(NumericRange {
+                minimum: 5.0,
+                maximum: 25.0,
+            });
+            recipe.max_points_per_profile = Some(2);
+            let configured = service
+                .configure_profile_trajectory_view(&view.view_id.0, 1, "layer_1", recipe)
+                .unwrap();
+            let encoding = &configured.layers[0].encoding;
+            assert_eq!(
+                encoding["selection_mapping"]["entity_suffixes"][2],
+                "profile_observations_salinity"
+            );
+            assert_eq!(
+                encoding["source_row_identity"],
+                if extension == "parquet" {
+                    "parquet_physical_row_v1"
+                } else {
+                    "arrow_file_batch_row_v1"
+                }
+            );
+            let selection = service
+                .save_selection(
+                    &configured.view_id.0,
+                    SemanticSelection::Rows {
+                        dataset_id: manifest.dataset_id,
+                        predicate: json!({
+                            "entity_path": format!(
+                                "datasets/{}/layer_1/profile_observations_salinity",
+                                configured.dataset_ids[0]
+                            ),
+                            "instance_id": 2,
+                            "mapping_kind": "source_row_index",
+                            "rerun_version": wilddatum_core::PINNED_RERUN_VERSION,
+                        }),
+                        row_count: 1,
+                    },
+                    json!({"source": "structured_profile_test"}),
+                )
+                .unwrap();
+            let exact = service
+                .query_selection(&selection.selection_id.0, None, 100)
+                .await
+                .unwrap();
+            assert_eq!(exact.preview["rows"][0]["source_index"], 2);
+            assert_eq!(exact.preview["rows"][0]["values"]["salinity"], 35.2);
+        }
     }
 }

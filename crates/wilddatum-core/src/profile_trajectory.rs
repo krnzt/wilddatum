@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::PINNED_RERUN_VERSION;
 
 pub const PROFILE_TRAJECTORY_VIEW_KIND: &str = "profile_trajectory_v1";
+pub const MAX_PROFILE_TRAJECTORY_ROWS: usize = 100_000;
 pub const PROFILE_TRAJECTORY_OBSERVATION_SUFFIXES: [&str; 2] =
     ["map_observations", "profile_observations"];
 
@@ -41,9 +42,21 @@ pub struct ProfileValueSpec {
     pub fill_values: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct NumericRange {
+    pub minimum: f64,
+    pub maximum: f64,
+}
+
+impl NumericRange {
+    pub fn contains(self, value: f64) -> bool {
+        value >= self.minimum && value <= self.maximum
+    }
+}
+
 /// User-controlled scientific semantics for a linked trajectory/profile view.
 /// Source-row selection mappings are intentionally not part of this input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProfileTrajectoryRecipeV1 {
     pub trajectory_id_field: String,
     pub profile_id_field: String,
@@ -52,6 +65,18 @@ pub struct ProfileTrajectoryRecipeV1 {
     pub longitude_field: String,
     pub vertical: VerticalAxisSpec,
     pub value: ProfileValueSpec,
+    /// Additional measurements rendered as linked profile panels. `value`
+    /// remains the primary value for backward-compatible v1 JSON.
+    #[serde(default)]
+    pub additional_values: Vec<ProfileValueSpec>,
+    /// Inclusive source-coordinate depth/pressure/height range.
+    #[serde(default)]
+    pub vertical_range: Option<NumericRange>,
+    /// Optional per-profile display budget. Unsampled source slots remain in
+    /// the Rerun batches as transparent placeholders so instance IDs retain
+    /// exact source-row identity.
+    #[serde(default)]
+    pub max_points_per_profile: Option<u32>,
 }
 
 impl ProfileTrajectoryRecipeV1 {
@@ -67,11 +92,22 @@ impl ProfileTrajectoryRecipeV1 {
             ("longitude_field".into(), json!(self.longitude_field)),
             ("vertical".into(), json!(self.vertical)),
             ("value".into(), json!(self.value)),
+            ("additional_values".into(), json!(self.additional_values)),
         ]);
         if let Some(time_field) = &self.time_field {
             encoding.insert("time_field".into(), json!(time_field));
         }
+        if let Some(vertical_range) = self.vertical_range {
+            encoding.insert("vertical_range".into(), json!(vertical_range));
+        }
+        if let Some(maximum) = self.max_points_per_profile {
+            encoding.insert("max_points_per_profile".into(), json!(maximum));
+        }
         encoding
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &ProfileValueSpec> {
+        std::iter::once(&self.value).chain(&self.additional_values)
     }
 }
 
@@ -97,6 +133,42 @@ impl SourceRowSelectionMapping {
             rerun_version: PINNED_RERUN_VERSION.into(),
         }
     }
+
+    pub fn profile_trajectory_v1_with_values<'a>(
+        value_fields: impl IntoIterator<Item = &'a str>,
+    ) -> Self {
+        let mut mapping = Self::profile_trajectory_v1();
+        mapping.entity_suffixes = std::iter::once("map_observations".into())
+            .chain(
+                value_fields
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, field)| profile_observation_suffix(index, field)),
+            )
+            .collect();
+        mapping
+    }
+}
+
+pub fn profile_observation_suffix(index: usize, field: &str) -> String {
+    if index == 0 {
+        return "profile_observations".into();
+    }
+    let safe_field = field
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!("profile_observations_{safe_field}")
+}
+
+pub fn profile_line_suffix(index: usize, field: &str) -> String {
+    profile_observation_suffix(index, field).replacen("observations", "lines", 1)
 }
 
 #[cfg(test)]
@@ -124,6 +196,9 @@ mod tests {
                 accepted_qc: vec!["1".into(), "2".into()],
                 fill_values: vec!["-9999".into()],
             },
+            additional_values: vec![],
+            vertical_range: None,
+            max_points_per_profile: None,
         };
         let encoding = recipe.encoding();
         assert_eq!(encoding["view_kind"], PROFILE_TRAJECTORY_VIEW_KIND);
@@ -146,6 +221,18 @@ mod tests {
         assert_eq!(
             mapping.entity_suffixes,
             ["map_observations", "profile_observations"]
+        );
+        assert_eq!(
+            SourceRowSelectionMapping::profile_trajectory_v1_with_values([
+                "temperature",
+                "oxygen adjusted",
+            ])
+            .entity_suffixes,
+            [
+                "map_observations",
+                "profile_observations",
+                "profile_observations_oxygen_adjusted",
+            ]
         );
     }
 }

@@ -8642,6 +8642,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "wilddatum-core",
+ "wilddatum-query",
  "wilddatum-service",
  "zarrs",
 ]
@@ -8651,6 +8652,7 @@ name = "wilddatum-service"
 version = "0.1.0-alpha.2"
 dependencies = [
  "arrow-array",
+ "arrow-ipc",
  "arrow-schema",
  "blake3",
  "chrono",

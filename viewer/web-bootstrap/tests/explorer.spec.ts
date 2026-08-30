@@ -16,6 +16,7 @@ let explorer: ChildProcessWithoutNullStreams;
 let explorerUrl: string;
 let pointViewId: string;
 let profileViewId: string;
+let multiProfileViewId: string;
 
 test.beforeAll(async () => {
   stateRoot = await mkdtemp(path.join(tmpdir(), "wilddatum-browser-smoke-"));
@@ -57,7 +58,46 @@ test.beforeAll(async () => {
     ["demo", "profile-trajectory", "--no-open"],
     {env: environment, timeout: 90_000}
   );
-  profileViewId = JSON.parse(profileDemo.stdout).view_id;
+  const profile = JSON.parse(profileDemo.stdout);
+  profileViewId = profile.view_id;
+  const multiProfile = await execute(
+    executable,
+    ["create-view", "--name", "Multi-value profile smoke", profile.dataset_ids[0]],
+    {env: environment, timeout: 30_000}
+  );
+  multiProfileViewId = JSON.parse(multiProfile.stdout).view_id;
+  const additionalValue = JSON.stringify({
+    field: "psal_adjusted",
+    unit: "1e-3",
+    qc_field: "psal_adjusted_qc",
+    accepted_qc: ["1", "2"],
+    fill_values: []
+  });
+  await execute(
+    executable,
+    [
+      "configure-profile-trajectory",
+      multiProfileViewId,
+      "--trajectory-id-field", "platform_number",
+      "--profile-id-field", "cycle_number",
+      "--time-field", "time",
+      "--latitude-field", "latitude",
+      "--longitude-field", "longitude",
+      "--vertical-field", "pres",
+      "--vertical-direction", "positive-down",
+      "--vertical-unit", "decibar",
+      "--value-field", "temp_adjusted",
+      "--value-unit", "degree_Celsius",
+      "--qc-field", "temp_adjusted_qc",
+      "--accept-qc", "1",
+      "--accept-qc", "2",
+      "--additional-value-json", additionalValue,
+      "--vertical-min", "10",
+      "--vertical-max", "700",
+      "--max-points-per-profile", "4"
+    ],
+    {env: environment, timeout: 30_000}
+  );
   explorerUrl = await startExplorer(acceptedView.view_id);
 });
 
@@ -165,6 +205,43 @@ test("profile trajectory contract exposes a real Rerun instance pick", async ({p
   }
 });
 
+test("multi-value profile rendering keeps exact additional-series selections", async ({page}) => {
+  await stopExplorer();
+  explorerUrl = await startExplorer(multiProfileViewId);
+  await page.goto(explorerUrl);
+  await loadRenderedExplorer(page);
+
+  const configured = await page.evaluate(async () => {
+    const token = new URLSearchParams(window.location.search).get("token");
+    const response = await fetch(`/api/view?token=${encodeURIComponent(token ?? "")}`);
+    return response.json();
+  });
+  expect(configured.layers[0].encoding.additional_values[0].field).toBe("psal_adjusted");
+  expect(configured.layers[0].encoding.vertical_range).toEqual({minimum: 10, maximum: 700});
+  expect(configured.layers[0].encoding.max_points_per_profile).toBe(4);
+  expect(configured.layers[0].encoding.selection_mapping.entity_suffixes).toContain(
+    "profile_observations_psal_adjusted"
+  );
+
+  const picked = await clickNearObservation(
+    page,
+    "profile_observations_psal_adjusted",
+    0.539,
+    0.669
+  );
+  expect(picked.record.selection.type).toBe("rows");
+  expect(picked.record.selection.predicate.instance_id).toBe(picked.item.instance_id);
+  const queried = await execute(
+    executable,
+    ["query-selection", picked.record.selection_id],
+    {env: demoEnvironment(), timeout: 30_000}
+  );
+  const exact = JSON.parse(queried.stdout);
+  expect(exact.preview.rows[0].source_index).toBe(picked.item.instance_id);
+  expect(exact.preview.rows[0].values.psal_adjusted).toBeTruthy();
+  await expect(page.locator("#viewer")).not.toContainText("Rerun has crashed");
+});
+
 async function startExplorer(viewId: string): Promise<string> {
   explorer = spawn(executable, ["serve", viewId, "--port", "0"], {
     env: demoEnvironment(),
@@ -247,7 +324,7 @@ async function latestSelection(page: Page): Promise<any> {
 
 async function clickNearObservation(
   page: Page,
-  entitySuffix: "map_observations" | "profile_observations",
+  entitySuffix: string,
   xFraction: number,
   yFraction: number,
   expectedInstance?: number

@@ -9,6 +9,7 @@ license.workspace = true
 csv.workspace = true
 wilddatum-core = { path = "../wilddatum-core" }
 wilddatum-service = { path = "../wilddatum-service" }
+wilddatum-query = { path = "../wilddatum-query" }
 fixed.workspace = true
 flatgeobuf.workspace = true
 geo.workspace = true
