@@ -144,19 +144,22 @@ The boundary is deliberately honest about what the viewer API exposes:
 
 Linked geographic trajectories and vertical profiles deliberately reuse this
 boundary. `configure_profile_trajectory_view` validates a typed
-`profile_trajectory_v1` recipe against the immutable CSV/TSV source, then the
-service—not the client—adds a `source_row_index` selection mapping. The Rerun
-adapter parses observations in source order, groups line geometry by
+`profile_trajectory_v1` recipe against an immutable CSV/TSV, Parquet, or Arrow
+source, then the service—not the client—adds a `source_row_index` selection
+mapping with the allowed entity suffix for every value panel. The Rerun adapter
+parses deterministic physical record order, groups line geometry by
 trajectory/profile identifiers, keeps native QC on pickable observations, and
-logs source-record indices as instance IDs.
+logs physical source-record indices as instance IDs. Profile-aware sampling and
+vertical ranges hide observations with transparent in-range placeholders rather
+than compacting those instance arrays.
 
 The web shell does not derive or transmit a trusted source index. It emits the
 selected observation entity and instance together with the mapping kind and
 pinned Rerun version. `query_selection` reopens authoritative view and manifest
-state, verifies that exact mapping, checks multiplication/bounds, and streams
-the requested delimited record as uncoerced strings. This makes a pick in either
-the map or profile panel reproducible without asking an agent to interpret
-pixels or trust browser-authored scientific state.
+state, verifies that exact mapping, checks multiplication/bounds, and reads the
+requested physical record directly from the delimited, Parquet, or Arrow source.
+This makes a pick in the map or any value profile reproducible without asking an
+agent to interpret pixels or trust browser-authored scientific state.
 
 ## Data lifecycle
 

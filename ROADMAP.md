@@ -58,7 +58,7 @@ Alpha.3 deepens the human-agent visualization loop before adding another RI.
 - [x] Extract LAS WKT/GeoKey CRS plus NEON HDF5 EPSG, map/affine, extent,
   scale, and no-data metadata; execute point-return → image-pixel → spectrum
   only when CRS, transform consistency, and footprints prove registration.
-- [ ] Extend profile/trajectory views to multiple values, Parquet/Arrow source
+- [x] Extend profile/trajectory views to multiple values, Parquet/Arrow source
   identity, profile-aware downsampling, and depth/pressure ranges.
 
 ## Following: authenticated ecological repositories

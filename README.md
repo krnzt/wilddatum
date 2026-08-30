@@ -46,7 +46,8 @@ state. A Rerun recording is a regenerable rendering artifact. For verified
 WildDatum point batches, an instance pick maps back to an exact LAS/LAZ source
 row; for a mapped cube, an image click maps back to the complete source spectrum.
 For linked trajectories and vertical profiles, a map or profile point maps back
-to the exact original CSV/TSV record, including provider-native QC values.
+to the exact physical CSV/TSV, Parquet, or Arrow record, including
+provider-native QC values.
 
 ## What works in the alpha
 
@@ -68,7 +69,7 @@ to the exact original CSV/TSV record, including provider-native QC values.
   JSON-RPC contract; an RI contributor can work in Rust, Python, R, Go, or
   another language without adding provider-specific MCP tools.
 
-## Alpha.3 development: explained scientific views
+## Alpha.3: linked scientific views
 
 The main branch can now inspect the scientific structure of an existing local
 or materialized dataset without exposing its private path:
@@ -122,6 +123,12 @@ wavelength/value series inside its spectrum panel. The structured selection and
 result provenance still drive the overlay; the browser does not reconstruct it
 from canvas coordinates.
 
+Linked trajectory/profile views now accept CSV, TSV, Parquet, GeoParquet,
+Arrow IPC, and Feather sources. One map can drive up to eight QC-aware value
+profiles. Inclusive depth/pressure/height ranges and deterministic per-profile
+point budgets reduce visual load while transparent source slots preserve exact
+Rerun-instance → physical-record identity for every displayed format.
+
 Detailed support and caveats are in the [format matrix](docs/FORMATS.md). Design
 boundaries are documented in [architecture](docs/ARCHITECTURE.md) and
 [implementation decisions](docs/DECISIONS.md). Planned Research Infrastructure,
@@ -134,7 +141,7 @@ The alpha ships self-contained macOS universal and Linux x86-64 packages. You
 do not need Rust, Node.js, CMake, or a separate Rerun installation:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/krnzt/wilddatum/v0.1.0-alpha.2/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/krnzt/wilddatum/v0.1.0-alpha.3/scripts/install.sh | sh
 ```
 
 The installer verifies the release SHA-256, installs under `~/.local` by
@@ -220,9 +227,9 @@ supports the raster, vector, point-cloud, image, and cube formats in the
 
 ## Linked trajectories and vertical profiles
 
-Profile/trajectory rendering is a validated recipe over ordinary CSV or TSV
-data, not a provider-specific renderer. Start locally with the deterministic
-demo:
+Profile/trajectory rendering is a validated recipe over ordinary CSV, TSV,
+Parquet, GeoParquet, Arrow IPC, or Feather data, not a provider-specific
+renderer. Start locally with the deterministic demo:
 
 ```bash
 wilddatum demo profile-trajectory
@@ -231,7 +238,7 @@ wilddatum demo profile-trajectory
 The agent workflow is the same for a local import or materialized ERDDAP table:
 
 ```text
-user imports a local CSV/TSV, or agent materializes a provider subset
+user imports a compatible local table, or agent materializes a provider subset
   → create_view
   → configure_profile_trajectory_view
   → open_view
@@ -242,10 +249,12 @@ user imports a local CSV/TSV, or agent materializes a provider subset
 ```
 
 The recipe explicitly names trajectory/profile identifiers, time, longitude,
-latitude, vertical coordinate and direction, one displayed value, units, fill
-values, and accepted native QC codes. WildDatum validates those fields against
-the source before authoring the exact-row mapping; the browser cannot declare a
-source index trusted.
+latitude, vertical coordinate and direction, one primary plus optional
+additional displayed values, units, fill values, and accepted native QC codes.
+It can also apply an inclusive source-coordinate vertical range and a
+per-profile display budget. WildDatum validates those fields against the source
+before authoring the exact-row mapping; the browser cannot declare a source
+index trusted, and sampling never changes the source instance slots.
 
 ![WildDatum linked trajectory map and vertical temperature profile with a real Rerun point selection serialized as exact-row agent context](docs/assets/profile-trajectory-explorer.png)
 

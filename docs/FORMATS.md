@@ -105,16 +105,19 @@ reprojection or nearest-neighbor registration is inferred in Alpha.3.
 
 ## Linked trajectories and vertical profiles
 
-`profile_trajectory_v1` is a versioned visualization recipe over a delimited
-source, not a new `Modality`. It currently accepts CSV and TSV datasets whose
-view layer is tabular, time-series, or trajectory/vector data. A recipe names:
+`profile_trajectory_v1` is a versioned visualization recipe over a source table,
+not a new `Modality`. It accepts CSV, TSV, Parquet, GeoParquet, Arrow IPC, and
+Feather datasets whose view layer is tabular, time-series, or trajectory/vector
+data. A recipe names:
 
 - trajectory and profile identifier fields;
 - optional time plus required latitude and longitude fields;
 - one vertical field, `positive_up` or `positive_down`, unit, and textual fill
   values; and
-- one displayed value field, unit, optional native QC field, accepted QC codes,
-  and textual fill values.
+- one primary and up to seven additional displayed value fields, each with its
+  own unit, optional native QC field, accepted QC codes, and fill values;
+- an optional inclusive source-coordinate vertical range; and
+- an optional maximum displayed point count per profile.
 
 Configuration reads the authoritative source, verifies every named column, and
 requires finite latitude, longitude, vertical, and value observations. Empty,
@@ -122,27 +125,30 @@ configured fill, and non-finite values are omitted. QC-rejected observations
 remain visible and selectable in amber but do not participate in the green
 trajectory/profile line geometry. Native QC fields are never normalized away.
 
-The map uses Rerun `MapView` with source longitude/latitude in EPSG:4326. The
-profile uses the raw vertical and value coordinates in a `Spatial2DView`; a
+The map uses Rerun `MapView` with source longitude/latitude in EPSG:4326. Each
+value gets a linked `Spatial2DView` using raw vertical and value coordinates; a
 positive-down axis is displayed downward without changing the stored source
 value. Rerun currently applies an equal raw-coordinate aspect, so a temperature
 range of a few degrees against thousands of decibars can look like a nearly
-vertical line. WildDatum preserves the honest axes instead of inventing a visual
-scale transform.
+vertical line. WildDatum preserves the honest axes instead of inventing a
+visual scale transform.
 
-Each finite observation is logged with its zero-based delimited source-record
-index as the Rerun instance ID. A browser pick supplies only the entity path,
+Each observation array is logged in deterministic physical source order: CSV
+and TSV data-record order, Parquet row-group/row order, or Arrow batch/row
+order. Invalid, out-of-range, and per-profile-unsampled positions retain
+transparent placeholders, so the Rerun instance ID remains the zero-based
+physical source-record index. A browser pick supplies only the entity path,
 instance ID, mapping kind, and Rerun version. The service verifies the view,
-dataset, layer, entity suffix, mapping stride, pinned version, and source bounds
-before creating an exact `SourceRows` query. Results retain original strings in
-an envelope shaped like `{source_index, values}`; they do not coerce identifiers,
-QC codes, or provider unit rows.
+dataset, layer, value-specific entity suffix, mapping stride, pinned version,
+and source bounds before creating an exact `SourceRows` query. Delimited results
+retain original strings; Parquet/Arrow results retain provider-native typed
+scalars in the same `{source_index, values}` envelope.
 
 Rendering rejects inputs above 100,000 source records. One viewer pick queries
 one row; direct exact-row queries accept at most 10,000 unique indices. The same
-RRD and exact-row contract are used by native Rerun and Rerun Web Viewer. General
-depth/interval brushing, multiple displayed values, Parquet row identity, and
-profile-aware downsampling are not implemented yet.
+RRD and exact-row contract are used by native Rerun and Rerun Web Viewer.
+Arbitrary freehand interval brushing remains future work; configured inclusive
+vertical ranges and source-exact sampled observations are available now.
 
 ## Local-source privacy and identity
 
