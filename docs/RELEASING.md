@@ -24,8 +24,8 @@ credential is stored in the repository.
 4. Create and push the matching annotated tag, for example:
 
    ```bash
-   git tag -a v0.1.0-alpha.2 -m "WildDatum v0.1.0-alpha.2"
-   git push origin v0.1.0-alpha.2
+   git tag -a v0.1.0-alpha.3 -m "WildDatum v0.1.0-alpha.3"
+   git push origin v0.1.0-alpha.3
    ```
 
 5. Verify the release assets on a clean supported machine and confirm the
